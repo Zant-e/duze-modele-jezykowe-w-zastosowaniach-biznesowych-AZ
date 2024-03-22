@@ -1,11 +1,12 @@
-# mgrAZ
+# Praca magisterska - Antoni Ziółkowski
 
 ### To-do:
-* [ ] Polskie formatowanie miesięcy w Zotero
-* [ ] Bibliografia Zotero na końcu dokumentu
-* [ ] Autonumerowanie wzorów
-* [ ] Dokończyć 1.2, 1.3 z pierwszego rozdziału
-* Następnie 2 rozdział lub python, żeby się nie zanudzić.
+* [x] Przerzucenie źródeł do Mendeleya, sprawdzenie autobibliografii
+* [x] Numerowanie wzorów
+* [x] Autonumerowanie rozdziałów
+* [ ] Dokończyć 1.2 z pierwszego rozdziału (pozostało przepisać embedding, sparse transformers + dopisać o wielomodalności)
+* [ ] Dokończyć 1.3 z pierwszego rozdziału
+* Następnie 2 rozdział lub python
 
-### Other notes
-Główny pomysł na implementację praktyczną - mały model (np. 7B) z wieloma Lora adapterami do różnych zadań, porównanie rezultatów do jednego dużego modelu (który nie odpaliłby lokalnie na 24GB VRAMu)
+### Notatki:
+* Główny pomysł na implementację praktyczną - mały model (np. 7B) z wieloma Lora adapterami do różnych zadań, porównanie rezultatów do jednego dużego modelu (który nie odpaliłby lokalnie na 24GB VRAMu)
