@@ -1,13 +1,4 @@
 # Praca magisterska - Antoni Ziółkowski
 
-### To-do:
-* ~~[x] Przerzucenie źródeł do Mendeleya, sprawdzenie autobibliografii~~
-* ~~[x] Numerowanie wzorów~~
-* ~~[x] Autonumerowanie rozdziałów~~
-* [x] Dokończyć 1.2 z pierwszego rozdziału
-* [ ] Dokończyć 1.3 z pierwszego rozdziału
-* Następnie 2 rozdział lub python
-
 ### Notatki:
-* Główny pomysł na implementację praktyczną - mały model (np. 7B) z wieloma Lora adapterami do różnych zadań, porównanie rezultatów do jednego dużego modelu (który nie odpaliłby lokalnie na 24GB VRAMu)
-* Folder źródeł w repozytorium jest deprecated i służy jedynie jako reference jeśli czegoś jeszcze nie wrzuciłem do Mendeleya
+* Główny pomysł na implementację praktyczną - implementacje większych i mniejszych modeli, z różnymi technikami adaptacji/ograniczania zużycia VRAMu, porównanie co sie najbardziej opłaca na konsumenckich kartach graficznych
