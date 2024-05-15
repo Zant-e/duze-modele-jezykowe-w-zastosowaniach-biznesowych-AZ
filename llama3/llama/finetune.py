@@ -4,7 +4,7 @@ from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 import re
 from transformers import (
     BitsAndBytesConfig,
-    Trainer,
+    Trainer,;; 
     TrainingArguments,
     AutoModelForCausalLM,
 )
@@ -47,7 +47,9 @@ def prep(
 generator = prep(ckpt_dir, tokenizer_path, 512, 6)
 model = generator.get_model()
 tokenizer = generator.get_tokenizer()
-
+# print first 10 model layers
+for key, value in model.named_parameters():
+    print(key)
 generator.prep_for_training()
 
 # list names of trainable parameters
@@ -57,3 +59,21 @@ for name, param in model.named_parameters():
 
 generator.prep_for_training(output_requires_grad=False)
 
+checkpoint = torch.load(
+    "Meta-Llama-3-8B-Instruct/consolidated.00.pth", map_location="cpu"
+)
+
+# print key, value of checkpoint
+i = 0
+for k, v in checkpoint.items():
+    i += 1
+    print(k)
+    if i > 10:
+        break
+# print state dict of model
+i = 0
+for k, v in model.state_dict().items():
+    i += 1
+    print(k)
+    if i > 10:
+        break

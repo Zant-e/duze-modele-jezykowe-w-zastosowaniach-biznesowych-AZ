@@ -108,6 +108,8 @@ class Llama:
                                 new_state_dict[new_key] = value
                             else:
                                 new_state_dict[key] = value
+                        else:
+                            new_state_dict[key] = value
         else:
             new_state_dict = checkpoint.copy()
 
@@ -141,14 +143,23 @@ class Llama:
     def get_tokenizer(self):
         return self.tokenizer
 
-    def prep_for_training(self, output_requires_grad: bool = False):
+    def prep_for_training(
+        self, layers_to_upcast: list = [], output_requires_grad: bool = False
+    ):
+        accepted_upcast_params = ["tok_embeddings.weight", "output", "norm"]
+        if not all(layer in accepted_upcast_params for layer in layers_to_upcast):
+            raise ValueError(
+                "Invalid layer in layers_to_upcast. Accepted layers are: "
+                + ", ".join(accepted_upcast_params)
+            )
+
         lora.mark_only_lora_as_trainable(self.model)
         if output_requires_grad:
             self.model.output.weight.requires_grad = True
 
-        # upcasting RMSNorm and final Linear layer to float32
+        # upcasting based on layers_to_upcast
         for name, param in self.model.named_parameters():
-            if "norm" in name or "output" in name:
+            if any(layer in name for layer in layers_to_upcast):
                 param.data = param.data.to(torch.float32)
 
         # print percentage of trainable parameters

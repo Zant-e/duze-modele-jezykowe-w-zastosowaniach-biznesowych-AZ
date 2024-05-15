@@ -9,7 +9,8 @@
     "norm_eps": 1e-05,
     "rope_theta": 500000.0,
     "lora_target": [
-        "all_linear"
+        "q",
+        "embed"
     ],
     "lora_r": 2,
     "lora_alpha": 2,
