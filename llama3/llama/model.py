@@ -85,6 +85,19 @@ def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
         .reshape(bs, slen, n_kv_heads * n_rep, head_dim)
     )
 
+def quant_layer(quant_type: str, in_features: int, out_features: int, bias: bool):
+    if quant_type == "fp4":
+        return LinearFP4(in_features, out_features, bias)
+    elif quant_type == "nf4":
+        return LinearNF4(in_features, out_features, bias)
+    elif quant_type == "8bit":
+        return Linear8bitLt(
+            in_features, out_features, bias, has_fp16_weights=False
+        )
+    elif quant_type is None:
+        return nn.Linear(in_features, out_features, bias)
+    else:
+        raise ValueError("Invalid linear_type")
 
 class Lora_Quant_Linear(nn.Module, lora.LoRALayer):
     # LoRA implemented in a dense layer
@@ -117,7 +130,7 @@ class Lora_Quant_Linear(nn.Module, lora.LoRALayer):
             self.linear = Linear8bitLt(
                 in_features, out_features, bias, has_fp16_weights=False
             )
-        elif quant_type == "":
+        elif quant_type is None:
             self.linear = nn.Linear(in_features, out_features, bias)
         else:
             raise ValueError("Invalid linear_type")
@@ -203,7 +216,7 @@ class Attention(nn.Module):
                 bias=False,
             )
             if "all_linear" in args.lora_target or "q" in args.lora_target
-            else nn.Linear(args.dim, args.n_heads * self.head_dim, bias=False)
+            else quant_layer(args.quant_type, args.dim, args.n_heads * self.head_dim, bias=False)
         )
         self.wk = (
             Lora_Quant_Linear(
@@ -217,7 +230,7 @@ class Attention(nn.Module):
                 bias=False,
             )
             if "all_linear" in args.lora_target or "k" in args.lora_target
-            else nn.Linear(args.dim, self.n_kv_heads * self.head_dim, bias=False)
+            else quant_layer(args.quant_type,args.dim, self.n_kv_heads * self.head_dim, bias=False)
         )
         self.wv = (
             Lora_Quant_Linear(
@@ -231,7 +244,7 @@ class Attention(nn.Module):
                 bias=False,
             )
             if "all_linear" in args.lora_target or "v" in args.lora_target
-            else nn.Linear(args.dim, self.n_kv_heads * self.head_dim, bias=False)
+            else quant_layer(args.quant_type,args.dim, self.n_kv_heads * self.head_dim, bias=False)
         )
         self.wo = (
             Lora_Quant_Linear(
@@ -245,7 +258,7 @@ class Attention(nn.Module):
                 bias=False,
             )
             if "all_linear" in args.lora_target or "o" in args.lora_target
-            else nn.Linear(args.n_heads * self.head_dim, args.dim, bias=False)
+            else quant_layer(args.quant_type,args.n_heads * self.head_dim, args.dim, bias=False)
         )
 
         self.cache_k = torch.zeros(
@@ -361,9 +374,9 @@ class FeedForward(nn.Module):
                 bias=False,
             )
         else:
-            self.w1 = nn.Linear(dim, hidden_dim, bias=False)
-            self.w2 = nn.Linear(hidden_dim, dim, bias=False)
-            self.w3 = nn.Linear(dim, hidden_dim, bias=False)
+            self.w1 = quant_layer(args.quant_type,dim, hidden_dim, bias=False)
+            self.w2 = quant_layer(args.quant_type,hidden_dim, dim, bias=False)
+            self.w3 = quant_layer(args.quant_type,dim, hidden_dim, bias=False)
 
     def forward(self, x):
         return self.w2(F.silu(self.w1(x)) * self.w3(x))

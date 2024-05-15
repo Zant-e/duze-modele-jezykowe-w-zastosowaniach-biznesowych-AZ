@@ -72,7 +72,6 @@ class Llama:
 
         # modyfing state dict
         new_state_dict = {}
-        lora_target_re = params["lora_target"][0]
         # Define a dictionary to map lora_target values to their corresponding regex patterns and key formats
         target_map = {
             "q": (
@@ -97,17 +96,20 @@ class Llama:
             ),
         }
 
-        for key, value in checkpoint.items():
-            for target, (pattern, key_format) in target_map.items():
-                if lora_target_re in {"all_linear", target}:
-                    match = re.match(pattern, key)
-                    if match:
-                        groups = match.groups()
-                        new_key = key_format.format(*groups)
-                        new_state_dict[new_key] = value
-                        break
-            else:
-                new_state_dict[key] = value
+        if params["lora_target"]:
+            for lora_target_re in params["lora_target"]:
+                for key, value in checkpoint.items():
+                    for target, (pattern, key_format) in target_map.items():
+                        if lora_target_re in {"all_linear", target}:
+                            match = re.match(pattern, key)
+                            if match:
+                                groups = match.groups()
+                                new_key = key_format.format(*groups)
+                                new_state_dict[new_key] = value
+                            else:
+                                new_state_dict[key] = value
+        else:
+            new_state_dict = checkpoint.copy()
 
         model_args: ModelArgs = ModelArgs(
             max_seq_len=max_seq_len,

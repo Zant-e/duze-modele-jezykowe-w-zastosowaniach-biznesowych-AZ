@@ -11,7 +11,7 @@
     "lora_target": [
         "all_linear"
     ],
-    "lora_r": 3,
+    "lora_r": 2,
     "lora_alpha": 2,
     "lora_dropout": 0.1,
     "quant_type": "nf4"
