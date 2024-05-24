@@ -6,15 +6,16 @@ from typing import List, Optional
 import fire
 
 from llama import Dialog, Llama
+from llama.utils import instantiate_model_and_tokenizer
 
 
 def main(
-    ckpt_dir: str,
-    tokenizer_path: str,
+    # ckpt_dir: str,
+    # tokenizer_path: str,
     temperature: float = 0.6,
     top_p: float = 0.9,
-    max_seq_len: int = 512,
-    max_batch_size: int = 4,
+    max_seq_len: int = 8192,
+    max_batch_size: int = 2,
     max_gen_len: Optional[int] = None,
 ):
     """
@@ -28,11 +29,22 @@ def main(
 
     `max_gen_len` is optional because finetuned models are able to stop generations naturally.
     """
-    generator = Llama.build(
-        ckpt_dir=ckpt_dir,
-        tokenizer_path=tokenizer_path,
+    # generator = Llama.build(
+    #     ckpt_dir=ckpt_dir,
+    #     tokenizer_path=tokenizer_path,
+    #     max_seq_len=max_seq_len,
+    #     max_batch_size=max_batch_size,
+    # )
+    generator = instantiate_model_and_tokenizer(
+        instruct_model=True,
         max_seq_len=max_seq_len,
         max_batch_size=max_batch_size,
+        seed=1,
+        lora_target=[],
+        lora_r=0,
+        lora_alpha=0,
+        lora_dropout=0.0,
+        quant_type="nf4",
     )
 
     dialogs: List[Dialog] = [

@@ -6,16 +6,17 @@ from typing import List
 import fire
 
 from llama import Llama
+from llama.utils import instantiate_model_and_tokenizer
 
 
 def main(
-    ckpt_dir: str,
-    tokenizer_path: str,
+    # ckpt_dir: str,
+    # tokenizer_path: str,
     temperature: float = 0.6,
     top_p: float = 0.9,
     max_seq_len: int = 128,
     max_gen_len: int = 64,
-    max_batch_size: int = 4,
+    max_batch_size: int = 1,
 ):
     """
     Examples to run with the pre-trained models (no fine-tuning). Prompts are
@@ -24,29 +25,37 @@ def main(
     The context window of llama3 models is 8192 tokens, so `max_seq_len` needs to be <= 8192.
     `max_gen_len` is needed because pre-trained models usually do not stop completions naturally.
     """
-    generator = Llama.build(
-        ckpt_dir=ckpt_dir,
-        tokenizer_path=tokenizer_path,
+    # generator = Llama.build(
+    #     ckpt_dir=ckpt_dir,
+    #     tokenizer_path=tokenizer_path,
+    #     max_seq_len=max_seq_len,
+    #     max_batch_size=max_batch_size,
+    # )
+    generator = instantiate_model_and_tokenizer(
+        instruct_model=False,
         max_seq_len=max_seq_len,
         max_batch_size=max_batch_size,
+        seed=1,
+        lora_target=[],
+        lora_r=0,
+        lora_alpha=0,
+        lora_dropout=0.0,
+        quant_type="nf4",
     )
 
     prompts: List[str] = [
         # For these prompts, the expected answer is the natural continuation of the prompt
         "I believe the meaning of life is",
-        "Simply put, the theory of relativity states that ",
-        """A brief message congratulating the team on the launch:
-
-        Hi everyone,
-
-        I just """,
-        # Few shot prompt (providing a few examples before asking model to complete more);
-        """Translate English to French:
-
-        sea otter => loutre de mer
-        peppermint => menthe poivrée
-        plush girafe => girafe peluche
-        cheese =>""",
+        # "Simply put, the theory of relativity states that ",
+        # """A brief message congratulating the team on the launch:
+        # Hi everyone,
+        # I just """,
+        # # Few shot prompt (providing a few examples before asking model to complete more);
+        # """Translate English to French:
+        # sea otter => loutre de mer
+        # peppermint => menthe poivrée
+        # plush girafe => girafe peluche
+        # cheese =>""",
     ]
     results = generator.text_completion(
         prompts,

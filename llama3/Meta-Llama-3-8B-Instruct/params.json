@@ -10,7 +10,8 @@
     "rope_theta": 500000.0,
     "lora_target": [
         "q",
-        "embed"
+        "k",
+        "v"
     ],
     "lora_r": 2,
     "lora_alpha": 2,

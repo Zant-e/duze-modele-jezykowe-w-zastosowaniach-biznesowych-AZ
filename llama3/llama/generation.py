@@ -3,6 +3,7 @@ import os
 import sys
 import time
 import re
+import gc
 from pathlib import Path
 from typing import List, Optional, Tuple, TypedDict
 import torch
@@ -33,6 +34,7 @@ class Llama:
         max_seq_len: int,
         max_batch_size: int,
         seed: int = 1,
+        params: dict = {},  # params changed from a static file to a user created dict
     ) -> "Llama":
         """
         Build a Llama instance by initializing and loading a model checkpoint.
@@ -66,9 +68,9 @@ class Llama:
         checkpoints = sorted(Path(ckpt_dir).glob("*.pth"))
         assert len(checkpoints) > 0, f"no checkpoint files found in {ckpt_dir}"
         ckpt_path = checkpoints[0]
-        checkpoint = torch.load(ckpt_path, map_location="cpu")
-        with open(Path(ckpt_dir) / "params.json", "r") as f:
-            params = json.loads(f.read())
+        checkpoint = torch.load(
+            ckpt_path, map_location="cuda"
+        )  # loading directly to cuda avoids excessive ram usage
 
         # modyfing state dict
         new_state_dict = {}
@@ -111,7 +113,7 @@ class Llama:
                         else:
                             new_state_dict[key] = value
         else:
-            new_state_dict = checkpoint.copy()
+            new_state_dict = checkpoint  # deleted explicit copying of checkpoint
 
         model_args: ModelArgs = ModelArgs(
             max_seq_len=max_seq_len,
@@ -121,13 +123,18 @@ class Llama:
 
         tokenizer = Tokenizer(model_path=tokenizer_path)
         assert model_args.vocab_size == tokenizer.n_words
-        torch.set_default_tensor_type(torch.HalfTensor)
 
-        model = Transformer(model_args)
+        model = Transformer(model_args).half()
 
-        torch.set_default_tensor_type(torch.cuda.BFloat16Tensor)
         model.load_state_dict(new_state_dict, strict=False)
-        model.to("cuda")
+        # clearing state dicts from VRAM
+        del new_state_dict, checkpoint
+        gc.collect()
+        torch.cuda.empty_cache()
+        # bfloat16 increases speed, stability, and reduces memory usage
+        # quantization happens when model is loaded to VRAM
+        model.to("cuda", dtype=torch.bfloat16)
+
         print(f"Loaded in {time.time() - start_time:.2f} seconds")
 
         return Llama(model, tokenizer)
@@ -137,16 +144,10 @@ class Llama:
         self.tokenizer = tokenizer
         self.formatter = ChatFormat(tokenizer)
 
-    def get_model(self):
-        return self.model
-
-    def get_tokenizer(self):
-        return self.tokenizer
-
     def prep_for_training(
         self, layers_to_upcast: list = [], output_requires_grad: bool = False
     ):
-        accepted_upcast_params = ["tok_embeddings.weight", "output", "norm"]
+        accepted_upcast_params = ["tok_embeddings.weight", "output", "norm", None]
         if not all(layer in accepted_upcast_params for layer in layers_to_upcast):
             raise ValueError(
                 "Invalid layer in layers_to_upcast. Accepted layers are: "
@@ -180,6 +181,9 @@ class Llama:
         top_p: float = 0.9,
         logprobs: bool = False,
         echo: bool = False,
+        additional_stop_tokens: Optional[
+            List[str]
+        ] = None,  # variable used by some lm_eval harness tasks
     ) -> Tuple[List[List[int]], Optional[List[List[float]]]]:
         """
         Generate text sequences based on provided prompts using the language generation model.
@@ -228,7 +232,14 @@ class Llama:
                 ignore_index=pad_id,
             )
 
-        stop_tokens = torch.tensor(list(self.tokenizer.stop_tokens))
+        stop_tokens = list(self.tokenizer.stop_tokens)
+
+        # encode additional stop tokens
+        if additional_stop_tokens:
+            for token in additional_stop_tokens:
+                stop_tokens.extend(self.tokenizer.encode(token, bos=False, eos=False))
+
+        stop_tokens = torch.tensor(stop_tokens).to("cuda")
 
         for cur_pos in range(min_prompt_len, total_len):
             logits = self.model.forward(tokens[:, prev_pos:cur_pos], prev_pos)
@@ -269,7 +280,8 @@ class Llama:
             if logprobs:
                 probs = token_logprobs[i][start : len(prompt_tokens[i]) + max_gen_len]
             # cut to after eos tok if any
-            for stop_token in self.tokenizer.stop_tokens:
+
+            for stop_token in stop_tokens:
                 try:
                     eos_idx = toks.index(stop_token)
                     toks = toks[:eos_idx]
