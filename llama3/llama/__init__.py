@@ -4,4 +4,3 @@
 from .generation import Llama
 from .model import ModelArgs, Transformer
 from .tokenizer import Dialog, Tokenizer
-from .utils import instantiate_model_and_tokenizer, HarnessModel

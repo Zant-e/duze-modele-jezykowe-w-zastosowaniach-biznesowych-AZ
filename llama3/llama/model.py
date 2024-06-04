@@ -7,7 +7,7 @@ import bitsandbytes
 from bitsandbytes.nn import LinearFP4, LinearNF4, Linear8bitLt
 import loralib as lora
 import torch.nn.functional as F
-from typing import List
+from typing import List, Optional
 
 
 @dataclass
@@ -29,6 +29,7 @@ class ModelArgs:
 
     max_batch_size: int = 32
     max_seq_len: int = 2048
+    use_cache: bool = True
 
 
 class RMSNorm(torch.nn.Module):
@@ -109,7 +110,7 @@ class Lora_Quant_Linear(nn.Module, lora.LoRALayer):
         lora_alpha: int = 1,
         lora_dropout: float = 0.0,
         fan_in_fan_out: bool = False,  # Set this to True if the layer to replace stores weight like (fan_in, fan_out)
-        merge_weights: bool = True,
+        merge_weights: bool = False,  # Wont work with current implementation of quantization -> dimension mismatch
         quant_type: str = "",
         bias: bool = False,
     ):
@@ -203,6 +204,7 @@ class Attention(nn.Module):
         self.n_local_kv_heads = self.n_kv_heads
         self.n_rep = self.n_local_heads // self.n_local_kv_heads
         self.head_dim = args.dim // args.n_heads
+        self.use_cache = args.use_cache
 
         self.wq = (
             Lora_Quant_Linear(
@@ -211,7 +213,6 @@ class Attention(nn.Module):
                 r=args.lora_r,
                 lora_alpha=args.lora_alpha,
                 lora_dropout=args.lora_dropout,
-                merge_weights=True,
                 quant_type=args.quant_type,
                 bias=False,
             )
@@ -227,7 +228,6 @@ class Attention(nn.Module):
                 r=args.lora_r,
                 lora_alpha=args.lora_alpha,
                 lora_dropout=args.lora_dropout,
-                merge_weights=True,
                 quant_type=args.quant_type,
                 bias=False,
             )
@@ -243,7 +243,6 @@ class Attention(nn.Module):
                 r=args.lora_r,
                 lora_alpha=args.lora_alpha,
                 lora_dropout=args.lora_dropout,
-                merge_weights=True,
                 quant_type=args.quant_type,
                 bias=False,
             )
@@ -259,7 +258,6 @@ class Attention(nn.Module):
                 r=args.lora_r,
                 lora_alpha=args.lora_alpha,
                 lora_dropout=args.lora_dropout,
-                merge_weights=True,
                 quant_type=args.quant_type,
                 bias=False,
             )
@@ -269,22 +267,26 @@ class Attention(nn.Module):
             )
         )
 
-        self.cache_k = torch.zeros(
-            (
-                args.max_batch_size,
-                args.max_seq_len,
-                self.n_local_kv_heads,
-                self.head_dim,
-            )
-        ).cuda()
-        self.cache_v = torch.zeros(
-            (
-                args.max_batch_size,
-                args.max_seq_len,
-                self.n_local_kv_heads,
-                self.head_dim,
-            )
-        ).cuda()
+        if self.use_cache:
+            self.cache_k = torch.zeros(
+                (
+                    args.max_batch_size,
+                    args.max_seq_len,
+                    self.n_local_kv_heads,
+                    self.head_dim,
+                )
+            ).cuda()
+            self.cache_v = torch.zeros(
+                (
+                    args.max_batch_size,
+                    args.max_seq_len,
+                    self.n_local_kv_heads,
+                    self.head_dim,
+                )
+            ).cuda()
+        else:
+            self.cache_k = None
+            self.cache_v = None
 
     def forward(
         self,
@@ -302,14 +304,18 @@ class Attention(nn.Module):
 
         xq, xk = apply_rotary_emb(xq, xk, freqs_cis=freqs_cis)
 
-        self.cache_k = self.cache_k.to(xq)
-        self.cache_v = self.cache_v.to(xq)
+        if self.use_cache:
+            self.cache_k = self.cache_k.to(xq)
+            self.cache_v = self.cache_v.to(xq)
 
-        self.cache_k[:bsz, start_pos : start_pos + seqlen] = xk
-        self.cache_v[:bsz, start_pos : start_pos + seqlen] = xv
+            self.cache_k[:bsz, start_pos : start_pos + seqlen] = xk
+            self.cache_v[:bsz, start_pos : start_pos + seqlen] = xv
 
-        keys = self.cache_k[:bsz, : start_pos + seqlen]
-        values = self.cache_v[:bsz, : start_pos + seqlen]
+            keys = self.cache_k[:bsz, : start_pos + seqlen]
+            values = self.cache_v[:bsz, : start_pos + seqlen]
+        else:
+            keys = xk
+            values = xv
 
         # repeat k/v heads if n_kv_heads < n_heads
         keys = repeat_kv(
@@ -357,7 +363,6 @@ class FeedForward(nn.Module):
                 r=args.lora_r,
                 lora_alpha=args.lora_alpha,
                 lora_dropout=args.lora_dropout,
-                merge_weights=True,
                 quant_type=args.quant_type,
                 bias=False,
             )
@@ -367,7 +372,6 @@ class FeedForward(nn.Module):
                 r=args.lora_r,
                 lora_alpha=args.lora_alpha,
                 lora_dropout=args.lora_dropout,
-                merge_weights=True,
                 quant_type=args.quant_type,
                 bias=False,
             )
@@ -377,7 +381,6 @@ class FeedForward(nn.Module):
                 r=args.lora_r,
                 lora_alpha=args.lora_alpha,
                 lora_dropout=args.lora_dropout,
-                merge_weights=True,
                 quant_type=args.quant_type,
                 bias=False,
             )
@@ -407,6 +410,7 @@ class TransformerBlock(nn.Module):
         self.layer_id = layer_id
         self.attention_norm = RMSNorm(args.dim, eps=args.norm_eps)
         self.ffn_norm = RMSNorm(args.dim, eps=args.norm_eps)
+        self.use_cache = args.use_cache
 
     def forward(
         self,
@@ -433,7 +437,6 @@ class Transformer(nn.Module):
                 params.dim,
                 r=params.lora_r,
                 lora_alpha=params.lora_alpha,
-                merge_weights=True,
             )
         else:
             self.tok_embeddings = nn.Embedding(params.vocab_size, params.dim)
@@ -451,12 +454,18 @@ class Transformer(nn.Module):
             params.rope_theta,
         )
 
-    @torch.inference_mode()
-    def forward(self, tokens: torch.Tensor, start_pos: int):
+        self.use_cache = params.use_cache
+
+    def forward(self, tokens: torch.Tensor, start_pos: int = 0):
         _bsz, seqlen = tokens.shape
         h = self.tok_embeddings(tokens)
         self.freqs_cis = self.freqs_cis.to(h.device)
-        freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
+        # freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
+        freqs_cis = (
+            self.freqs_cis[start_pos : start_pos + seqlen]
+            if self.use_cache
+            else self.freqs_cis[:seqlen]
+        )
 
         mask = None
         if seqlen > 1:
@@ -464,13 +473,14 @@ class Transformer(nn.Module):
 
             mask = torch.triu(mask, diagonal=1)
 
-            # When performing key-value caching, we compute the attention scores
-            # only for the new sequence. Thus, the matrix of scores is of size
-            # (seqlen, cache_len + seqlen), and the only masked entries are (i, j) for
-            # j > cache_len + i, since row i corresponds to token cache_len + i.
-            mask = torch.hstack(
-                [torch.zeros((seqlen, start_pos), device=tokens.device), mask]
-            ).type_as(h)
+            if self.use_cache:
+                # When performing key-value caching, we compute the attention scores
+                # only for the new sequence. Thus, the matrix of scores is of size
+                # (seqlen, cache_len + seqlen), and the only masked entries are (i, j) for
+                # j > cache_len + i, since row i corresponds to token cache_len + i.
+                mask = torch.hstack(
+                    [torch.zeros((seqlen, start_pos), device=tokens.device), mask]
+                ).type_as(h)
 
         for layer in self.layers:
             h = layer(h, start_pos, freqs_cis, mask)

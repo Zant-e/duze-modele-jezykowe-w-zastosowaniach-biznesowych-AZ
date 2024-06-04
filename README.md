@@ -7,20 +7,21 @@ Rozdział 3: Sprawdzenie wydajności Lory i Qlory - różne kwantyzacje, hiperpa
 Rozdział 4: Implementacja wniosków z rozdziału 3 w modelu MoE.\
 
 ## Notatki:
-Do uruchomienia przykładów/eksperymentów z modelem należy najpierw pobrać model od Mety.
+Do uruchomienia przykładów/eksperymentów z modelem należy najpierw pobrać model od Mety. \
+Bibliotekę lm_eval_harness zainstalowałem manualnie, nie sprawdzałem jeszcze czy wersja z requirements.txt/pipa działa z obecnym kodem. \
+Przy aktualnej konfiguracji, skrypty zakładają posiadanie GPU z CUDA i obsługą bfloat16. \
 
 ## Already done:
 - Implementacja Lory i kwantyzacji bez użycia bibliotek huggingface (zachowanie kontroli i modularności, przydatny skillset do 4 rozdziału). \
 - Ładowanie pretrained wag do zmodyfikowanego modelu (funkcjonuje niezależnie od ustawień Lory i kwantyzacji). \
 - Implementacja Lory pozwala na konfigurację targetowanych warstw, przy zachowaniu wybranej kwantyzacji dla reszty modelu. \
-- Integracja popularnej biblioteki lm_eval harness do ewaluacji modeli. \
+- Skrypt do ewaluacji - integracja biblioteki lm_eval_harness \
+- Porównanie wyników modeli dla różnych kwantyzacji (bez zastosowania LoRy). \
+- Skrypt uczący.
 
 ## To do:
-- [x] Dodać opcję adaptacji Lory dla input embeddingów.
-- [x] Sprawdzić czy zamrażać input/output embeddingi i layernormy (niejasne, dodano opcje konfiguracji - do sprawdzenia przy uczeniu)
-- ~~[] Dodać opcję inicjalizacji LoftQ~~ (dodaje sporo komplikacji konfiguracyjnych - do dodania jeśli zostanie czas lub lora nie będzie zbiegać)
-- [x] Napisać skrypt eval (zintegrowano z lm evaluation harness)
-- [x] Baseline ewaluacja zkwantyzowanych modeli
-- [] Napisać skrypt train
-- [] Wyczyścić repo
-- [] Dodać requirements.txt
+- [] Wybrać większy dataset
+- [] Cupti profiler nie działa poprawnie - naprawić
+- [] Integracja Optuny, z opcją monitorowania przez wandb
+- [] Hyperparameter tuning
+- [] Napisać architekturę MoE

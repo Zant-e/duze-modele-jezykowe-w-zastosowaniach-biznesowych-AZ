@@ -1,3 +1,5 @@
-# ignore model files in llama3
 llama3/Meta-Llama-3-8B/consolidated.00.pth
 llama3/Meta-Llama-3-8B-Instruct/consolidated.00.pth
+llama3/llama/__pycache__
+llama3/utils/__pycache__
+llama3/.vscode

@@ -1,5 +1,6 @@
 import lm_eval
-from llama import instantiate_model_and_tokenizer, HarnessModel
+from llama import Llama
+from utils.eval_utils import HarnessModel
 import json
 import os
 import gc
@@ -9,7 +10,7 @@ import time
 
 def main(model_type, quant_type, limit=100):
 
-    generator = instantiate_model_and_tokenizer(
+    generator = Llama.build(
         instruct_model=model_type == "instruct",
         max_seq_len=8192,
         max_batch_size=1,
@@ -19,8 +20,6 @@ def main(model_type, quant_type, limit=100):
         lora_alpha=0,
         lora_dropout=0.0,
         quant_type=quant_type,
-        layers_to_upcast=[],
-        output_requires_grad=False,
     )
 
     mymodel = HarnessModel(generator)
@@ -71,6 +70,7 @@ def main(model_type, quant_type, limit=100):
     with open(file_path, "w", encoding="utf-8") as f:
         json.dump(existing_results, f, indent=4)
 
+    # Deleting model and variables to free up VRAM
     generator.model.cpu()
     del (
         generator.model,

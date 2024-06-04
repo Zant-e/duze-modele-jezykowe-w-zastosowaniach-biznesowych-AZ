@@ -469,24 +469,24 @@
     },
     "lambada": {
         "lambada": {
-            "acc,none": 0.0,
-            "acc_stderr,none": 0.0,
-            "perplexity,none": 13727473.363458134,
-            "perplexity_stderr,none": 2277026.926963832,
+            "perplexity,none": 4.015982466328632,
+            "perplexity_stderr,none": 0.4852316937056098,
+            "acc,none": 0.635,
+            "acc_stderr,none": 0.03419714088113863,
             "alias": "lambada"
         },
         "lambada_openai": {
-            "perplexity,none": 22276587.622546446,
-            "perplexity_stderr,none": 4452089.54539728,
-            "acc,none": 0.0,
-            "acc_stderr,none": 0.0,
+            "perplexity,none": 3.755844279389866,
+            "perplexity_stderr,none": 0.605653146623971,
+            "acc,none": 0.65,
+            "acc_stderr,none": 0.04793724854411019,
             "alias": " - lambada_openai"
         },
         "lambada_standard": {
-            "perplexity,none": 5178359.104369826,
-            "perplexity_stderr,none": 958282.4136117966,
-            "acc,none": 0.0,
-            "acc_stderr,none": 0.0,
+            "perplexity,none": 4.276120653267396,
+            "perplexity_stderr,none": 0.7582766330898913,
+            "acc,none": 0.62,
+            "acc_stderr,none": 0.048783173121456316,
             "alias": " - lambada_standard"
         }
     },
