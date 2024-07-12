@@ -3,7 +3,6 @@ from dataclasses import dataclass, field
 from typing import Optional, Tuple
 import torch
 from torch import nn
-import bitsandbytes
 from bitsandbytes.nn import LinearFP4, LinearNF4, Linear8bitLt
 import loralib as lora
 import torch.nn.functional as F
@@ -30,6 +29,10 @@ class ModelArgs:
     max_batch_size: int = 32
     max_seq_len: int = 2048
     use_cache: bool = True
+
+    moe: bool = False
+    num_experts: int = 8
+    num_experts_per_tok: int = 2
 
 
 class RMSNorm(torch.nn.Module):
@@ -87,20 +90,20 @@ def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
     )
 
 
-def quant_layer(quant_type: str, in_features: int, out_features: int, bias: bool):
+def quant_layer(quant_type, in_features: int, out_features: int, bias: bool):
     if quant_type == "fp4":
         return LinearFP4(in_features, out_features, bias)
     elif quant_type == "nf4":
         return LinearNF4(in_features, out_features, bias)
     elif quant_type == "8bit":
         return Linear8bitLt(in_features, out_features, bias, has_fp16_weights=False)
-    elif quant_type is None:
+    elif quant_type == "":
         return nn.Linear(in_features, out_features, bias)
     else:
-        raise ValueError("Invalid linear_type")
+        raise ValueError("Invalid quant type")
 
 
-class Lora_Quant_Linear(nn.Module, lora.LoRALayer):
+class LoraQuantLinear(nn.Module):
     # LoRA implemented in a dense layer
     def __init__(
         self,
@@ -109,47 +112,52 @@ class Lora_Quant_Linear(nn.Module, lora.LoRALayer):
         r: int = 0,
         lora_alpha: int = 1,
         lora_dropout: float = 0.0,
-        fan_in_fan_out: bool = False,  # Set this to True if the layer to replace stores weight like (fan_in, fan_out)
-        merge_weights: bool = False,  # Wont work with current implementation of quantization -> dimension mismatch
         quant_type: str = "",
         bias: bool = False,
+        expert_core: Optional[nn.Module] = None,
     ):
         nn.Module.__init__(self)
-        lora.LoRALayer.__init__(
-            self,
-            r=r,
-            lora_alpha=lora_alpha,
-            lora_dropout=lora_dropout,
-            merge_weights=merge_weights,
-        )
-
-        if quant_type == "fp4":
-            self.linear = LinearFP4(in_features, out_features, bias)
-        elif quant_type == "nf4":
-            self.linear = LinearNF4(in_features, out_features, bias)
-        elif quant_type == "8bit":
-            self.linear = Linear8bitLt(
-                in_features, out_features, bias, has_fp16_weights=False
-            )
-        elif quant_type is None:
-            self.linear = nn.Linear(in_features, out_features, bias)
+        self.r = r
+        self.lora_alpha = lora_alpha
+        # Optional dropout
+        if lora_dropout > 0.0:
+            self.lora_dropout = nn.Dropout(p=lora_dropout)
         else:
-            raise ValueError("Invalid linear_type")
+            self.lora_dropout = lambda x: x
 
-        self.fan_in_fan_out = fan_in_fan_out
+        if expert_core is None:
+            self.linear = quant_layer(quant_type, in_features, out_features, bias)
+        else:
+            self.linear = expert_core
+
         # Actual trainable parameters
-        if r > 0:
+        if r > 0 and expert_core is None:
             self.lora_A = nn.Parameter(self.linear.weight.new_zeros((r, in_features)))
             self.lora_B = nn.Parameter(self.linear.weight.new_zeros((out_features, r)))
             self.scaling = self.lora_alpha / self.r
             # Freezing the pre-trained weight matrix
             self.linear.weight.requires_grad = False
+        else:
+            self.lora_A = nn.Parameter(
+                self.linear.w1.weight.new_zeros((r, in_features))
+            )
+            self.lora_B = nn.Parameter(
+                self.linear.w1.weight.new_zeros((out_features, r))
+            )
+            self.scaling = self.lora_alpha / self.r
+            # Freezing the pre-trained weight matrix
+            self.linear.w1.weight.requires_grad = False
+            self.linear.w2.weight.requires_grad = False
+            self.linear.w3.weight.requires_grad = False
         self.reset_parameters()
-        if fan_in_fan_out:
-            self.linear.weight.data = self.linear.weight.data.transpose(0, 1)
 
     def reset_parameters(self):
-        self.linear.reset_parameters()
+        try:
+            self.linear.reset_parameters()
+        except AttributeError:
+            self.linear.w1.reset_parameters()
+            self.linear.w2.reset_parameters()
+            self.linear.w3.reset_parameters()
         if hasattr(self, "lora_A"):
             # initialize B the same way as the default for nn.Linear and A to zero
             # this is different than what is described in the paper but should not affect performance
@@ -157,33 +165,10 @@ class Lora_Quant_Linear(nn.Module, lora.LoRALayer):
             nn.init.zeros_(self.lora_B)
 
     def train(self, mode: bool = True):
-        def T(w):
-            return w.transpose(0, 1) if self.fan_in_fan_out else w
-
         self.linear.train(mode)
-        if mode:
-            if self.merge_weights and self.merged:
-                # Make sure that the weights are not merged
-                if self.r > 0:
-                    self.linear.weight.data -= (
-                        T(self.lora_B @ self.lora_A) * self.scaling
-                    )
-                self.merged = False
-        else:
-            if self.merge_weights and not self.merged:
-                # Merge the weights and mark it
-                if self.r > 0:
-                    self.linear.weight.data += (
-                        T(self.lora_B @ self.lora_A) * self.scaling
-                    )
-                self.merged = True
 
     def forward(self, x: torch.Tensor):
-        def T(w):
-            return w.transpose(0, 1) if self.fan_in_fan_out else w
-
-        if self.r > 0 and not self.merged:
-            # result = F.linear(x, T(self.linear.weight), bias=self.linear.bias)
+        if self.r > 0:
             result = self.linear(x)
             result += (
                 self.lora_dropout(x)
@@ -192,7 +177,6 @@ class Lora_Quant_Linear(nn.Module, lora.LoRALayer):
             ) * self.scaling
             return result
         else:
-            # return F.linear(x, T(self.linear.weight), bias=self.linear.bias)
             return self.linear(x)
 
 
@@ -207,7 +191,7 @@ class Attention(nn.Module):
         self.use_cache = args.use_cache
 
         self.wq = (
-            Lora_Quant_Linear(
+            LoraQuantLinear(
                 args.dim,
                 args.n_heads * self.head_dim,
                 r=args.lora_r,
@@ -222,7 +206,7 @@ class Attention(nn.Module):
             )
         )
         self.wk = (
-            Lora_Quant_Linear(
+            LoraQuantLinear(
                 args.dim,
                 self.n_kv_heads * self.head_dim,
                 r=args.lora_r,
@@ -237,7 +221,7 @@ class Attention(nn.Module):
             )
         )
         self.wv = (
-            Lora_Quant_Linear(
+            LoraQuantLinear(
                 args.dim,
                 self.n_kv_heads * self.head_dim,
                 r=args.lora_r,
@@ -252,7 +236,7 @@ class Attention(nn.Module):
             )
         )
         self.wo = (
-            Lora_Quant_Linear(
+            LoraQuantLinear(
                 args.n_heads * self.head_dim,
                 args.dim,
                 r=args.lora_r,
@@ -356,8 +340,8 @@ class FeedForward(nn.Module):
         hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
 
         l = ["all_linear", "ffn"]
-        if any([x in args.lora_target for x in l]):
-            self.w1 = Lora_Quant_Linear(
+        if any([x in args.lora_target for x in l]) and args.moe is False:
+            self.w1 = LoraQuantLinear(
                 dim,
                 hidden_dim,
                 r=args.lora_r,
@@ -366,7 +350,7 @@ class FeedForward(nn.Module):
                 quant_type=args.quant_type,
                 bias=False,
             )
-            self.w2 = Lora_Quant_Linear(
+            self.w2 = LoraQuantLinear(
                 hidden_dim,
                 dim,
                 r=args.lora_r,
@@ -375,7 +359,7 @@ class FeedForward(nn.Module):
                 quant_type=args.quant_type,
                 bias=False,
             )
-            self.w3 = Lora_Quant_Linear(
+            self.w3 = LoraQuantLinear(
                 dim,
                 hidden_dim,
                 r=args.lora_r,
@@ -393,6 +377,38 @@ class FeedForward(nn.Module):
         return self.w2(F.silu(self.w1(x)) * self.w3(x))
 
 
+class MoeLayer(nn.Module):
+    def __init__(self, experts: List[nn.Module], gate: nn.Module, args: ModelArgs):
+        super().__init__()
+        assert len(experts) > 0
+        self.experts = nn.ModuleList(experts)
+        self.gate = gate
+        self.args = args
+        self.experts_logits = None
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        # inputs dim: (bs, seqlen, dim)
+        gate_logits = self.gate(inputs)  # (bs, seqlen, num_experts)
+        self.experts_logits = gate_logits
+        weights, selected_experts = torch.topk(
+            gate_logits, self.args.num_experts_per_tok, dim=-1
+        )  # (bs, seqlen, num_experts_per_tok)
+
+        weights = F.softmax(weights, dim=-1, dtype=torch.float).to(inputs.dtype)
+        results = torch.zeros_like(inputs)  # (bs, seqlen, dim)
+
+        for i, expert in enumerate(self.experts):
+            batch_idx, seqlen, nth_expert = torch.where(selected_experts == i)
+            # which batch was selected, which token, which expert (selected_tokens)
+
+            expert_output = expert(inputs[batch_idx, seqlen])  # (selected_tokens, dim)
+            weight = weights[batch_idx, seqlen, nth_expert].unsqueeze(
+                -1
+            )  # (selected_tokens, 1)
+            results[batch_idx, seqlen] += weight * expert_output
+        return results
+
+
 class TransformerBlock(nn.Module):
     def __init__(self, layer_id: int, args: ModelArgs):
         super().__init__()
@@ -400,17 +416,44 @@ class TransformerBlock(nn.Module):
         self.dim = args.dim
         self.head_dim = args.dim // args.n_heads
         self.attention = Attention(args)
-        self.feed_forward = FeedForward(
-            dim=args.dim,
-            hidden_dim=4 * args.dim,
-            multiple_of=args.multiple_of,
-            ffn_dim_multiplier=args.ffn_dim_multiplier,
-            args=args,
-        )
+        if args.moe is False:
+            self.feed_forward = FeedForward(
+                dim=args.dim,
+                hidden_dim=4 * args.dim,
+                multiple_of=args.multiple_of,
+                ffn_dim_multiplier=args.ffn_dim_multiplier,
+                args=args,
+            )
+        else:
+            self.expert_core = FeedForward(
+                dim=args.dim,
+                hidden_dim=4 * args.dim,
+                multiple_of=args.multiple_of,
+                ffn_dim_multiplier=args.ffn_dim_multiplier,
+                args=args,
+            )
+            self.feed_forward = MoeLayer(
+                experts=[
+                    LoraQuantLinear(
+                        args.dim,
+                        args.dim,
+                        args.lora_r,
+                        args.lora_alpha,
+                        args.lora_dropout,
+                        args.quant_type,
+                        bias=False,
+                        expert_core=self.expert_core,
+                    )
+                    for _ in range(args.num_experts)
+                ],
+                gate=nn.Linear(args.dim, args.num_experts, bias=False),
+                args=args,
+            )
         self.layer_id = layer_id
         self.attention_norm = RMSNorm(args.dim, eps=args.norm_eps)
         self.ffn_norm = RMSNorm(args.dim, eps=args.norm_eps)
         self.use_cache = args.use_cache
+        self.experts_logits = None
 
     def forward(
         self,
@@ -421,6 +464,8 @@ class TransformerBlock(nn.Module):
     ):
         h = x + self.attention(self.attention_norm(x), start_pos, freqs_cis, mask)
         out = h + self.feed_forward(self.ffn_norm(h))
+        if isinstance(self.feed_forward, MoeLayer):
+            self.experts_logits = self.feed_forward.experts_logits
         return out
 
 
@@ -446,7 +491,19 @@ class Transformer(nn.Module):
             self.layers.append(TransformerBlock(layer_id, params))
 
         self.norm = RMSNorm(params.dim, eps=params.norm_eps)
-        self.output = nn.Linear(params.dim, params.vocab_size, bias=False)
+        self.output = (
+            LoraQuantLinear(
+                params.dim,
+                params.vocab_size,
+                r=params.lora_r,
+                lora_alpha=params.lora_alpha,
+                lora_dropout=params.lora_dropout,
+                quant_type="",
+                bias=False,
+            )
+            if "output" in params.lora_target
+            else nn.Linear(params.dim, params.vocab_size, bias=False)
+        )
 
         self.freqs_cis = precompute_freqs_cis(
             params.dim // params.n_heads,
@@ -455,8 +512,21 @@ class Transformer(nn.Module):
         )
 
         self.use_cache = params.use_cache
+        self.all_expert_logits = []
 
     def forward(self, tokens: torch.Tensor, start_pos: int = 0):
+        """
+        Forward pass of the model
+
+        Args:
+            tokens (torch.Tensor): The input tensor of shape (bsz, seqlen)
+            start_pos (int): The starting position in the cache. If `use_cache` is False, `start_pos` is ignored.
+
+        Returns:
+            torch.Tensor: The output tensor
+            If `moe` is True, the function also returns a tuple of expert logits.
+
+        """
         _bsz, seqlen = tokens.shape
         h = self.tok_embeddings(tokens)
         self.freqs_cis = self.freqs_cis.to(h.device)
@@ -482,8 +552,21 @@ class Transformer(nn.Module):
                     [torch.zeros((seqlen, start_pos), device=tokens.device), mask]
                 ).type_as(h)
 
+        self.all_expert_logits = []
         for layer in self.layers:
             h = layer(h, start_pos, freqs_cis, mask)
+            if layer.experts_logits is not None:
+                # self.all_expert_logits.append(layer.experts_logits)
+                batch_size, sequence_length, num_experts = layer.experts_logits.shape
+                reshaped_logits = layer.experts_logits.reshape(
+                    batch_size * sequence_length, num_experts
+                )
+                self.all_expert_logits.append(reshaped_logits)
         h = self.norm(h)
         output = self.output(h).float()
-        return output
+
+        if self.params.moe:
+            # return output, self.all_expert_logits
+            return output, tuple(self.all_expert_logits)
+        else:
+            return output

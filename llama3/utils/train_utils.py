@@ -3,18 +3,15 @@ import time
 import yaml
 from pathlib import Path
 from datetime import datetime
-import contextlib
-
+from dataclasses import asdict
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 import json
 import loralib as lora
-
 from utils.memory_utils import MemoryTrace
 
 
-# Custom loss function - shifts tensors, masks out unwanted tokens
 def cross_entropy_loss(logits, labels, loss_mask):
     logits = logits[:, :-1, :].contiguous()
     labels = labels[:, 1:].contiguous()
@@ -28,38 +25,74 @@ def cross_entropy_loss(logits, labels, loss_mask):
     return loss
 
 
-@contextlib.contextmanager
-def profile(cfg):
-    use_profiler: bool = cfg.use_profiler
-    if use_profiler:
-        # profiler needs a warmup stage to get the accurate profiling results
-        wait_step, warmup_step, active_step = 1, 2, 3
-        min_step = wait_step + warmup_step + active_step + 1
-        if cfg.max_train_step > 0 and cfg.max_train_step < min_step:
-            raise ValueError(
-                f"pytorch profiler requires at least {min_step} train steps to finish the warm-up and recording stage, {wait_step} for wait_step, {warmup_step} for warmup_step, {active_step} for profiling step, please increase the max_train_step, current max_train_step {cfg.max_train_step}"
-            )
-        print(
-            f"pytorch profiling is activated and results will be saved in {cfg.profiler_dir}"
+def load_balancing_loss_func(
+    gate_logits: torch.Tensor, num_experts: int = 8, top_k: int = 2
+):
+    """
+    Computes auxiliary load balancing loss as in Switch Transformer - implemented in Pytorch.
+
+    See Switch Transformer (https://arxiv.org/abs/2101.03961) for more details. This function implements the loss
+    function presented in equations (4) - (6) of the paper. It aims at penalizing cases where the routing between
+    experts is too unbalanced.
+
+    Args:
+        gate_logits (Union[`torch.Tensor`, Tuple[torch.Tensor]): Logits from the `gate`, should be a tuple of  tensors of shape [batch_size X sequence_length, num_experts].
+        num_experts (int): Number of experts, defaults to 8.
+        top_k (int): Number of experts to route each token to, defaults to 2.
+
+    Returns:
+        The auxiliary loss.
+    """
+    if gate_logits is None or not isinstance(gate_logits, tuple):
+        return 0
+
+    if isinstance(gate_logits, tuple):
+        compute_device = gate_logits[0].device
+        concatenated_gate_logits = torch.cat(
+            [layer_gate.to(compute_device) for layer_gate in gate_logits], dim=0
         )
-        with torch.profiler.profile(
-            activities=[
-                torch.profiler.ProfilerActivity.CPU,
-                torch.profiler.ProfilerActivity.CUDA,
-            ],
-            schedule=torch.profiler.schedule(
-                wait=wait_step, warmup=warmup_step, active=active_step, repeat=1
-            ),
-            on_trace_ready=torch.profiler.tensorboard_trace_handler(cfg.profiler_dir),
-            profile_memory=True,
-            with_stack=False,
-            with_flops=True,
-            record_shapes=True,
-        ) as torch_profiler:
-            yield torch_profiler
-    else:
-        torch_profiler = contextlib.nullcontext()
-        yield None
+
+    routing_weights = torch.nn.functional.softmax(concatenated_gate_logits, dim=-1)
+
+    _, selected_experts = torch.topk(routing_weights, top_k, dim=-1)
+
+    # treat `top_k` as tokens (shape is `top_k X [batch_size X sequence_length]`)
+    selected_experts = selected_experts.reshape(-1)
+
+    expert_mask = torch.nn.functional.one_hot(selected_experts, num_experts)
+
+    # Compute the percentage of tokens routed to each experts
+    tokens_per_expert = torch.mean(expert_mask.float(), dim=0)
+
+    # Compute the average probability of routing to these experts
+    router_prob_per_expert = torch.mean(routing_weights, dim=0)
+
+    overall_loss = torch.sum(tokens_per_expert * router_prob_per_expert)
+    return overall_loss * num_experts
+
+
+def cross_entropy_loss_with_expert_penalty(
+    logits, labels, loss_mask, all_expert_logits, num_experts, top_k, alpha
+):
+    logits = logits[:, :-1, :].contiguous()
+    labels = labels[:, 1:].contiguous()
+    logits = logits.view(-1, logits.size(-1))
+    labels = labels.view(-1)
+
+    raw_loss = F.cross_entropy(logits, labels, reduction="none")
+    loss_mask = loss_mask[:, 1:].contiguous().view(-1)
+    ce_loss = (raw_loss * loss_mask).sum() / loss_mask.sum()
+
+    penalty = load_balancing_loss_func(all_expert_logits, num_experts, top_k)
+
+    loss = ce_loss + alpha * penalty
+
+    return loss
+
+
+def moe_state_dict(model: torch.nn.Module) -> dict[str, torch.Tensor]:
+    state_dict = model.state_dict()
+    return {k: state_dict[k] for k in state_dict if "lora_" in k or "gate" in k}
 
 
 def train(
@@ -122,78 +155,141 @@ def train(
                 total=total_length,
                 dynamic_ncols=True,
             )
-            with profile(train_config) as profile_context:
-                for step, batch in enumerate(train_dataloader):
-                    total_train_steps += 1
-                    # stop when the maximum number of training steps is reached
-                    if (
-                        train_config.max_train_step > 0
-                        and total_train_steps > train_config.max_train_step
-                    ):
-                        max_steps_reached = True
-                        print(
-                            "max training steps reached, stopping training, total train steps finished: ",
-                            total_train_steps - 1,
-                        )
-                        break
-                    for key in batch.keys():
-                        batch[key] = batch[key].to("cuda:0")
+            for step, batch in enumerate(train_dataloader):
+                total_train_steps += 1
+                # stop when the maximum number of training steps is reached
+                if (
+                    train_config.max_train_step > 0
+                    and total_train_steps > train_config.max_train_step
+                ):
+                    max_steps_reached = True
+                    print(
+                        "max training steps reached, stopping training, total train steps finished: ",
+                        total_train_steps - 1,
+                    )
+                    break
+                for key in batch.keys():
+                    batch[key] = batch[key].to("cuda:0")
 
+                if train_config.use_moe:
+                    logits, all_expert_logits = model.forward(batch["input_ids"])
+                    loss = cross_entropy_loss_with_expert_penalty(
+                        logits,
+                        batch["input_ids"],
+                        batch["loss_mask"],
+                        all_expert_logits,
+                        train_config.num_experts,
+                        train_config.num_experts_per_tok,
+                        train_config.penalty_alpha,
+                    )
+                else:
                     logits = model.forward(batch["input_ids"])
                     loss = cross_entropy_loss(
                         logits, batch["input_ids"], batch["loss_mask"]
                     )
-                    loss = loss / gradient_accumulation_steps
+
+                if torch.isnan(loss) or torch.isinf(loss):
+                    print(
+                        f"Encountered NaN/Inf loss at step {step}, stopping training."
+                    )
+                    break
+
+                loss = loss / gradient_accumulation_steps
+                if train_config.save_metrics:
+                    train_step_loss.append(loss.detach().float().item())
+                    train_step_perplexity.append(
+                        float(torch.exp(loss.detach().float()))
+                    )
+                total_loss += loss.detach().float()
+
+                loss.backward()
+                if (step + 1) % gradient_accumulation_steps == 0 or step == len(
+                    train_dataloader
+                ) - 1:
+                    if (
+                        train_config.gradient_clipping
+                        and train_config.gradient_clipping_threshold > 0.0
+                    ):
+                        torch.nn.utils.clip_grad_norm_(
+                            model.parameters(),
+                            train_config.gradient_clipping_threshold,
+                        )
+                    optimizer.step()
+                    optimizer.zero_grad()
+                    pbar.update(1)
+
+                ###############
+                if (
+                    step in [151, 1001, len(train_dataloader) // 2]
+                    and train_config.run_validation
+                ):
+                    eval_ppl, eval_epoch_loss, temp_val_loss, temp_step_perplexity = (
+                        evaluation(model, train_config, eval_dataloader, wandb_run)
+                    )
                     if train_config.save_metrics:
-                        train_step_loss.append(loss.detach().float().item())
-                        train_step_perplexity.append(
-                            float(torch.exp(loss.detach().float()))
-                        )
-                    total_loss += loss.detach().float()
+                        val_step_loss.extend(temp_val_loss)
+                        val_step_perplexity.extend(temp_step_perplexity)
 
-                    loss.backward()
-                    if (step + 1) % gradient_accumulation_steps == 0 or step == len(
-                        train_dataloader
-                    ) - 1:
-                        if (
-                            train_config.gradient_clipping
-                            and train_config.gradient_clipping_threshold > 0.0
-                        ):
-                            torch.nn.utils.clip_grad_norm_(
-                                model.parameters(),
-                                train_config.gradient_clipping_threshold,
-                            )
-                        optimizer.step()
-                        optimizer.zero_grad()
-                        pbar.update(1)
-                    if train_config.use_profiler:
-                        profile_context.step()
-                    if wandb_run:
-                        wandb_run.log(
-                            {
-                                "train/epoch": epoch + 1,
-                                "train/step": epoch * len(train_dataloader) + step,
-                                "train/loss": loss.detach().float(),
-                            }
-                        )
+                    checkpoint_start_time = time.perf_counter()
 
-                    pbar.set_description(
-                        f"Training Epoch: {epoch+1}/{train_config.num_epochs}, step {step}/{len(train_dataloader)} completed (loss: {loss.detach().float()})"
+                    # Save the model checkpoint if the validation loss is the best so far
+                    save_file = (
+                        f"{train_config.output_dir}/{train_config.model_name}.pt"
                     )
 
-                    if train_config.save_metrics:
-                        save_to_json(
-                            metrics_filename,
-                            train_step_loss,
-                            train_loss,
-                            train_step_perplexity,
-                            train_prep,
-                            val_step_loss,
-                            val_loss,
-                            val_step_perplexity,
-                            val_prep,
+                    if train_config.save_model and eval_epoch_loss < best_val_loss:
+                        if train_config.use_moe:
+                            torch.save(moe_state_dict(model), save_file)
+                        else:
+                            torch.save(lora.lora_state_dict(model), save_file)
+
+                        # saving model config
+                        model_config_file = (
+                            f"{train_config.output_dir}/model_config.json"
                         )
-                pbar.close()
+                        with open(model_config_file, "w") as f:
+                            json.dump(asdict(train_config), f)
+
+                        print(
+                            f"PEFT modules are saved in {train_config.output_dir} directory"
+                        )
+
+                    checkpoint_end_time = time.perf_counter() - checkpoint_start_time
+                    checkpoint_times.append(checkpoint_end_time)
+                    if eval_epoch_loss < best_val_loss:
+                        best_val_loss = eval_epoch_loss
+                        print(f"best eval loss on step {step+1} is {best_val_loss}")
+                    val_loss.append(float(best_val_loss))
+                    val_prep.append(float(eval_ppl))
+                    model.train()
+                ###############
+
+                if wandb_run:
+                    wandb_run.log(
+                        {
+                            "train/epoch": epoch + 1,
+                            "train/step": epoch * len(train_dataloader) + step,
+                            "train/loss": loss.detach().float(),
+                        }
+                    )
+
+                pbar.set_description(
+                    f"Training Epoch: {epoch+1}/{train_config.num_epochs}, step {step}/{len(train_dataloader)} completed (loss: {loss.detach().float()})"
+                )
+
+                if train_config.save_metrics:
+                    save_to_json(
+                        metrics_filename,
+                        train_step_loss,
+                        train_loss,
+                        train_step_perplexity,
+                        train_prep,
+                        val_step_loss,
+                        val_loss,
+                        val_step_perplexity,
+                        val_prep,
+                    )
+            pbar.close()
 
         epoch_end_time = time.perf_counter() - epoch_start_time
         epoch_times.append(epoch_end_time)
@@ -220,8 +316,18 @@ def train(
 
             # Save the model checkpoint if the validation loss is the best so far
             save_file = f"{train_config.output_dir}/{train_config.model_name}.pt"
+
             if train_config.save_model and eval_epoch_loss < best_val_loss:
-                torch.save(lora.lora_state_dict(model), save_file)
+                if train_config.use_moe:
+                    torch.save(moe_state_dict(model), save_file)
+                else:
+                    torch.save(lora.lora_state_dict(model), save_file)
+
+                # saving model config
+                model_config_file = f"{train_config.output_dir}/model_config.json"
+                with open(model_config_file, "w") as f:
+                    json.dump(asdict(train_config), f)
+
                 print(f"PEFT modules are saved in {train_config.output_dir} directory")
 
             checkpoint_end_time = time.perf_counter() - checkpoint_start_time
@@ -292,41 +398,43 @@ def evaluation(model, train_config, eval_dataloader, wandb_run):
     val_step_perplexity = []
     eval_loss = 0.0  # Initialize evaluation loss
     total_eval_steps = 0
-    with MemoryTrace() as memtrace:
-        for step, batch in enumerate(
-            tqdm(
-                eval_dataloader,
-                colour="green",
-                desc="evaluating Epoch",
-                dynamic_ncols=True,
-            )
+    # with MemoryTrace() as memtrace:
+    for step, batch in enumerate(
+        tqdm(
+            eval_dataloader,
+            colour="green",
+            desc="evaluating Epoch",
+            dynamic_ncols=True,
+        )
+    ):
+        total_eval_steps += 1
+        # stop when the maximum number of eval steps is reached
+        if (
+            train_config.max_eval_step > 0
+            and total_eval_steps > train_config.max_eval_step
         ):
-            total_eval_steps += 1
-            # stop when the maximum number of eval steps is reached
-            if (
-                train_config.max_eval_step > 0
-                and total_eval_steps > train_config.max_eval_step
-            ):
-                print(
-                    "max eval steps reached, stopping evaluation, total_eval_steps: ",
-                    total_eval_steps - 1,
-                )
-                break
-            for key in batch.keys():
-                batch[key] = batch[key].to("cuda:0")
-            # Ensure no gradients are computed for this scope to save memory
-            with torch.no_grad():
-                # Forward pass and compute loss
+            print(
+                "max eval steps reached, stopping evaluation, total_eval_steps: ",
+                total_eval_steps - 1,
+            )
+            break
+        for key in batch.keys():
+            batch[key] = batch[key].to("cuda:0")
+        # Ensure no gradients are computed for this scope to save memory
+        with torch.no_grad():
+            # Forward pass and compute loss
+            if train_config.use_moe:
+                logits, _ = model.forward(batch["input_ids"])
+            else:
                 logits = model.forward(batch["input_ids"])
-                loss = cross_entropy_loss(
-                    logits, batch["input_ids"], batch["loss_mask"]
-                )
 
-                if train_config.save_metrics:
-                    val_step_loss.append(loss.detach().float().item())
-                    val_step_perplexity.append(float(torch.exp(loss.detach().float())))
+            loss = cross_entropy_loss(logits, batch["input_ids"], batch["loss_mask"])
 
-                eval_loss += loss.detach().float()
+            if train_config.save_metrics:
+                val_step_loss.append(loss.detach().float().item())
+                val_step_perplexity.append(float(torch.exp(loss.detach().float())))
+
+            eval_loss += loss.detach().float()
 
     # Compute average loss and perplexity
     eval_epoch_loss = eval_loss / len(eval_dataloader)

@@ -1,15 +1,17 @@
-import os
-
 import dataclasses
 import fire
 import random
 import torch
 import torch.optim as optim
 from torch.optim.lr_scheduler import StepLR
-
 from utils.configs import train_config as TRAIN_CONFIG
-from utils.dataset_utils import get_preprocessed_curious, ConcatDataset, collate_fn
-
+from utils.dataset_utils import (
+    get_preprocessed_curious,
+    ConcatDataset,
+    collate_fn,
+    get_preprocessed_pure_dove,
+    get_preprocessed_cust_support,
+)
 from utils.configs import update_config
 from utils.train_utils import train
 from llama import Llama
@@ -59,13 +61,12 @@ def main(**kwargs):
         quant_type=train_config.quant_type,
         lora_ckpt_path=train_config.lora_ckpt_path,
         use_cache=False,
+        use_moe=train_config.use_moe,
+        num_experts=train_config.num_experts,
+        num_experts_per_tok=train_config.num_experts_per_tok,
     )
 
-    generator.prep_for_training(
-        layers_to_upcast=train_config.layers_to_upcast,
-        output_requires_grad=train_config.output_requires_grad,
-        embed_requires_grad=train_config.embed_requires_grad,
-    )
+    generator.prep_for_training()
 
     model = generator.model
     tokenizer = generator.tokenizer
@@ -73,12 +74,29 @@ def main(**kwargs):
     # Load and preprocess the dataset for training and validation
     if train_config.dataset == "curious_dataset":
         dataset = load_dataset("xiyuez/im-feeling-curious", split="train")
-        split = dataset.train_test_split(test_size=0.2)
+        split = dataset.train_test_split(test_size=0.2, seed=train_config.seed)
         train_split = split["train"]
         val_split = split["test"]
         dataset_train = get_preprocessed_curious(tokenizer, train_split)
-
         dataset_val = get_preprocessed_curious(tokenizer, val_split)
+
+    elif train_config.dataset == "pure_dove":
+        dataset = load_dataset("LDJnr/Pure-Dove", split="train")
+        split = dataset.train_test_split(test_size=0.2, seed=train_config.seed)
+        train_split = split["train"]
+        val_split = split["test"]
+        dataset_train = get_preprocessed_pure_dove(tokenizer, train_split)
+        dataset_val = get_preprocessed_pure_dove(tokenizer, val_split)
+
+    elif train_config.dataset == "cust_support":
+        dataset = load_dataset(
+            "bitext/Bitext-customer-support-llm-chatbot-training-dataset", split="train"
+        )
+        split = dataset.train_test_split(test_size=0.2, seed=train_config.seed)
+        train_split = split["train"]
+        val_split = split["test"]
+        dataset_train = get_preprocessed_cust_support(tokenizer, train_split)
+        dataset_val = get_preprocessed_cust_support(tokenizer, val_split)
 
     print(f"--> Training Set Length = {len(dataset_train)}")
     print(f"--> Validation Set Length = {len(dataset_val)}")

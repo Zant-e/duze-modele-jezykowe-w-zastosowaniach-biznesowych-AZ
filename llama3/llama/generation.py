@@ -1,4 +1,3 @@
-import json
 import time
 import re
 import gc
@@ -7,8 +6,6 @@ from typing import List, Optional, Tuple
 import torch
 from llama.model import ModelArgs, Transformer
 from llama.tokenizer import ChatFormat, Tokenizer
-import loralib as lora
-
 import torch.nn.functional as F
 
 
@@ -26,6 +23,9 @@ class Llama:
         quant_type: str = "",
         lora_ckpt_path: str = "",
         use_cache: bool = True,
+        use_moe: bool = False,
+        num_experts: int = 8,
+        num_experts_per_tok: int = 2,
     ) -> "Llama":
         """
         Build a Llama instance by initializing and loading a model checkpoint.
@@ -35,13 +35,16 @@ class Llama:
             max_seq_len (int): Maximum sequence length for input text.
             max_batch_size (int): Maximum batch size for inference.
             seed (int, optional): Random seed. Defaults to 1.
-            lora_target (list, optional): List of targets for LoRA adaptation. Accpeted values are: "q", "k", "v", "o", "ffn", "all_linear". Defaults to an empty list.
+            lora_target (list, optional): List of targets for LoRA adaptation. Accpeted values are: "q", "k", "v", "o", "ffn", "all_linear" (without output), "embed", "output". Defaults to an empty list.
             lora_r (int, optional): Rank of the LoRA matrix. Defaults to 0.
             lora_alpha (int, optional): Scaling factor for the LoRA matrix. Defaults to 1.
             lora_dropout (float, optional): Dropout rate for the LoRA layers. Defaults to 0.0.
             quant_type (str, optional): String specifying quantization parameters. Accepted values are: "nf4", "fp4", "8bit". Defaults to an empty string.
             lora_ckpt_path (str, optional): Path to a LoRA checkpoint file. Defaults to an empty string.
             use_cache (bool, optional): Flag indicating whether to use cache for inference. Defaults to True.
+            use_moe (bool, optional): Flag indicating whether to use Mixture of Experts (MoE) layers. Defaults to False.
+            num_experts (int, optional): Number of experts in the MoE layers. Defaults to 8.
+            num_experts_per_tok (int, optional): Number of experts per token in the MoE layers. Defaults to 2.
 
         Returns:
             Llama: An instance of the Llama class with the loaded model and tokenizer.
@@ -61,12 +64,6 @@ class Llama:
             ckpt_dir = "Meta-Llama-3-8B"
             tokenizer_path = "Meta-Llama-3-8B/tokenizer.model"
 
-        # Set the quantization type to None if it is an empty string
-        if quant_type == "":
-            quant = None
-        else:
-            quant = quant_type
-
         # Define a parameter dictionary based on the provided arguments
         params = {
             "dim": 4096,
@@ -82,10 +79,13 @@ class Llama:
             "lora_r": lora_r,
             "lora_alpha": lora_alpha,
             "lora_dropout": lora_dropout,
-            "quant_type": quant,
+            "quant_type": quant_type,
             "use_cache": use_cache,
             "max_seq_len": max_seq_len,
             "max_batch_size": max_batch_size,
+            "moe": use_moe,
+            "num_experts": num_experts,
+            "num_experts_per_tok": num_experts_per_tok,
         }
 
         # Pass the parameters to the ModelArgs class
@@ -98,8 +98,7 @@ class Llama:
         ckpt_path = checkpoints[0]
         checkpoint = torch.load(ckpt_path, map_location="cuda")
 
-        # Modify the state dictionary if LoRA is applied to any layer
-        # Regex used, as LoRA modifies model architecture
+        # Modify the state dictionary depending on whether LoRA/MoE layers are used
         new_state_dict = {}
         if params["lora_target"]:
             target_map = {
@@ -124,8 +123,23 @@ class Llama:
                     "layers.{}.feed_forward.w{}.linear.weight",
                 ),
             }
-            for lora_target_re in params["lora_target"]:
-                for key, value in checkpoint.items():
+
+            # Handle the specific case for output.weight
+            if "output" in params["lora_target"]:
+                target_map["output"] = (
+                    r"output\.weight",
+                    "output.linear.weight",
+                )
+
+            if use_moe:
+                target_map["ffn"] = (
+                    r"layers\.(\d+)\.feed_forward\.w(1|2|3)\.weight",
+                    "layers.{}.expert_core.w{}.weight",
+                )
+
+            for key, value in checkpoint.items():
+                replaced = False
+                for lora_target_re in params["lora_target"]:
                     for target, (pattern, key_format) in target_map.items():
                         if lora_target_re in {"all_linear", target}:
                             match = re.match(pattern, key)
@@ -133,10 +147,12 @@ class Llama:
                                 groups = match.groups()
                                 new_key = key_format.format(*groups)
                                 new_state_dict[new_key] = value
-                            else:
-                                new_state_dict[key] = value
-                        else:
-                            new_state_dict[key] = value
+                                replaced = True
+                                break
+                    if replaced:
+                        break
+                if not replaced:
+                    new_state_dict[key] = value
         else:
             new_state_dict = checkpoint
 
@@ -144,8 +160,7 @@ class Llama:
         tokenizer = Tokenizer(model_path=tokenizer_path)
         assert model_args.vocab_size == tokenizer.n_words
 
-        # Create a Transformer model instance (in half precision, for lower RAM usage)
-        model = Transformer(model_args).half()
+        model = Transformer(model_args)
 
         # Load the model state dictionary and LoRA checkpoint (if provided)
         model.load_state_dict(new_state_dict, strict=False)
@@ -172,41 +187,18 @@ class Llama:
 
     def prep_for_training(
         self,
-        layers_to_upcast: list = [],
-        output_requires_grad: bool = False,
-        embed_requires_grad: bool = False,
     ):
         """
         Prepare the model for training by freezing non-LoRA layers.
-        Optional settings for upcasting layers to float32 and enabling gradient for output and embedding layers.
-
-        Args:
-            layers_to_upcast (list, optional): List of layers to upcast to float32. Accepted layers are: "tok_embeddings.weight", "output", "norm". Defaults to an empty list.
-            output_requires_grad (bool, optional): Flag indicating whether to enable gradient for the output layer. Defaults to False.
-            embed_requires_grad (bool, optional): Flag indicating whether to enable gradient for the embedding layer. Defaults to False.
+        Print the percentage of trainable parameters.
         """
-        # Making sure provided layers are valid
-        accepted_upcast_params = ["tok_embeddings.weight", "output", "norm", None]
-        if not all(layer in accepted_upcast_params for layer in layers_to_upcast):
-            raise ValueError(
-                "Invalid layer in layers_to_upcast. Accepted layers are: "
-                + ", ".join(accepted_upcast_params)
-            )
 
-        # Making sure only LoRA layers are trainable
-        lora.mark_only_lora_as_trainable(self.model)
-
-        # Setting requires_grad for output and embedding layers
-        if output_requires_grad:
-            self.model.output.weight.requires_grad = True
-
-        if embed_requires_grad and "embed" not in self.model.params.lora_target:
-            self.model.tok_embeddings.weight.requires_grad = True
-
-        # Upcasting layers to float32 based on the provided list
-        for name, param in self.model.named_parameters():
-            if any(layer in name for layer in layers_to_upcast):
-                param.data = param.data.to(torch.float32)
+        # Making sure only LoRA layers and MoE gate are trainable
+        for n, p in self.model.named_parameters():
+            if "lora_" in n or "gate" in n:
+                p.requires_grad = True
+            else:
+                p.requires_grad = False
 
         # print percentage of trainable parameters
         total_params = sum(p.numel() for p in self.model.parameters())
@@ -273,7 +265,10 @@ class Llama:
         eos_reached = torch.tensor([False] * bsz, device="cuda")
         input_text_mask = tokens != pad_id
         if min_prompt_len == total_len:
-            logits = self.model.forward(tokens, prev_pos)
+            if self.model.params.moe:
+                logits, _ = self.model.forward(tokens, prev_pos)
+            else:
+                logits = self.model.forward(tokens, prev_pos)
             token_logprobs = -F.cross_entropy(
                 input=logits.transpose(1, 2),
                 target=tokens,
@@ -292,9 +287,17 @@ class Llama:
 
         for cur_pos in range(min_prompt_len, total_len):
             if use_cache:
-                logits = self.model.forward(tokens[:, prev_pos:cur_pos], prev_pos)
+                if self.model.params.moe:
+                    logits, _ = self.model.forward(
+                        tokens[:, prev_pos:cur_pos], prev_pos
+                    )
+                else:
+                    logits = self.model.forward(tokens[:, prev_pos:cur_pos], prev_pos)
             else:
-                logits = self.model.forward(tokens[:, :cur_pos])
+                if self.model.params.moe:
+                    logits, _ = self.model.forward(tokens[:, :cur_pos])
+                else:
+                    logits = self.model.forward(tokens[:, :cur_pos])
             if temperature > 0:
                 probs = torch.softmax(logits[:, -1] / temperature, dim=-1)
                 next_token = sample_top_p(probs, top_p)

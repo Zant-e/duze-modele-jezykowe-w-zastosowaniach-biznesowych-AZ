@@ -1,0 +1,76 @@
+program: finetune.py
+method: grid
+metric:
+  name: eval/loss
+  goal: minimize
+parameters:
+  project:
+    value: "llama3_hyperparameter_search"
+  output_dir:
+    value: "parameter_tuning/llama3_4bit"
+  model_type:
+    value: "instruct"
+  quant_type:
+    value: "nf4"
+  lora_target:
+    values: [["all_linear", "output"], ["ffn"]]
+  lora_r:
+    value: 16
+  lora_alpha:
+    value: 128
+  lora_dropout:
+    value: 0.1
+  batch_size_training:
+    value: 1
+  val_batch_size:
+    value: 2
+  context_length:
+    value: 8192
+  gradient_accumulation_steps:
+    value: 64
+  num_epochs:
+    value: 1
+  lr:
+    value: 1e-4
+  weight_decay:
+    value: 0
+  gamma:
+    value: 0.1
+  batching_strategy:
+    value: "padding"
+  gradient_clipping:
+    value: False
+  gradient_clipping_threshold:
+    value: 1.0
+  num_workers_dataloader:
+    value: 1
+  run_validation:
+    value: True
+  seed:
+    value: 1
+  dataset:
+    value: "cust_support"
+  save_model:
+    value: False
+  save_metrics:
+    value: False
+  use_wandb:
+    value: True
+  use_moe:
+    value: True
+  num_experts:
+    values: [4,8]
+  num_experts_per_tok:
+    values: [2,4]
+  penalty_alpha:
+    value: 1e-2
+  max_train_step:
+    value: 10000
+  max_eval_step:
+    value: 10000
+
+command:
+- ${env}
+- python3
+- ${program}
+- ${args}
