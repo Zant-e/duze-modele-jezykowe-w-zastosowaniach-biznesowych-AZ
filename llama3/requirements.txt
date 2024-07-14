@@ -11,4 +11,4 @@ seaborn==0.13.2
 tiktoken==0.4.0
 torch==2.3.0
 tqdm==4.66.4
-wandb==0.17.0
+wandb==0.17.4

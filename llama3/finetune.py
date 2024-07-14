@@ -7,6 +7,7 @@ from torch.optim.lr_scheduler import StepLR
 from utils.configs import train_config as TRAIN_CONFIG
 from utils.dataset_utils import (
     get_preprocessed_curious,
+    ConversationDataset,
     ConcatDataset,
     collate_fn,
     get_preprocessed_pure_dove,
@@ -16,6 +17,7 @@ from utils.configs import update_config
 from utils.train_utils import train
 from llama import Llama
 from datasets import load_dataset
+import pandas as pd
 
 
 def setup_wandb(train_config, **kwargs):
@@ -97,6 +99,44 @@ def main(**kwargs):
         val_split = split["test"]
         dataset_train = get_preprocessed_cust_support(tokenizer, train_split)
         dataset_val = get_preprocessed_cust_support(tokenizer, val_split)
+
+    elif train_config.dataset == "mixed":
+        pure_dove_ds = load_dataset("LDJnr/Pure-Dove", split="train")
+        cust_support_ds = load_dataset(
+            "bitext/Bitext-customer-support-llm-chatbot-training-dataset", split="train"
+        )
+
+        pure_dove_split = pure_dove_ds.train_test_split(
+            test_size=0.2, seed=train_config.seed
+        )
+        cust_support_split = cust_support_ds.train_test_split(
+            test_size=0.2, seed=train_config.seed
+        )
+
+        pure_dove_train = get_preprocessed_pure_dove(
+            tokenizer, pure_dove_split["train"]
+        ).dataset
+        pure_dove_val = get_preprocessed_pure_dove(
+            tokenizer, pure_dove_split["test"]
+        ).dataset
+
+        cust_support_train = get_preprocessed_cust_support(
+            tokenizer, cust_support_split["train"]
+        ).dataset
+        cust_support_val = get_preprocessed_cust_support(
+            tokenizer, cust_support_split["test"]
+        ).dataset
+
+        cust_support_train = cust_support_train[: 2 * len(pure_dove_train)]
+        cust_support_val = cust_support_val[: 2 * len(pure_dove_val)]
+
+        dataset_train = pd.concat([cust_support_train, pure_dove_train])
+        dataset_train = dataset_train.sample(frac=1)
+        dataset_train = ConversationDataset(dataset_train)
+
+        dataset_val = pd.concat([cust_support_val, pure_dove_val])
+        dataset_val = dataset_val.sample(frac=1)
+        dataset_val = ConversationDataset(dataset_val)
 
     print(f"--> Training Set Length = {len(dataset_train)}")
     print(f"--> Validation Set Length = {len(dataset_val)}")

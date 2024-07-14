@@ -6,10 +6,10 @@ from typing import List, Optional
 class train_config:
     # Model settings
     model_name: str = "model"
-    model_type: str = "instruct"  # pretrained or instruct
+    model_type: str = "pretrained"  # pretrained or instruct
     quant_type: str = "nf4"  # nf4, fp4, 8bit, ""
     lora_ckpt_path: str = ""  # path to lora checkpoint
-    output_dir: str = "parameter_tuning/llama3_8b_moe_instruct_customer"
+    output_dir: str = "tuned_checkpoints/llama3_8b_moe_pretrained_mixed"
 
     # LoRA settings
     lora_target: List[str] = field(
@@ -44,7 +44,8 @@ class train_config:
 
     # Miscellaneous settings
     seed: int = 1
-    dataset: str = "cust_support"  # curious_dataset, pure_dove or cust_support
+    dataset: str = "mixed"
+    # curious_dataset, pure_dove, cust_support or mixed (pure_dove + cust_support)
 
     # Save settings
     save_model: bool = True

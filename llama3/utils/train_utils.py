@@ -451,7 +451,7 @@ def evaluation(model, train_config, eval_dataloader, wandb_run):
             },
             commit=False,
         )
-
+    torch.cuda.empty_cache()
     return eval_ppl, eval_epoch_loss, val_step_loss, val_step_perplexity
 
 
