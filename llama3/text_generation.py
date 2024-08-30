@@ -1,19 +1,21 @@
 from typing import List, Optional, TypedDict
-import fire
+import json
 from llama import Dialog, Llama
 from llama.tokenizer import Message
+import gc
+import torch
 
 
 class ChatPrediction(TypedDict, total=False):
     generation: Message
-    tokens: List[str]  # not required
-    logprobs: List[float]  # not required
+    tokens: List[str]
+    logprobs: List[float]
 
 
 class CompletionPrediction(TypedDict, total=False):
     generation: str
-    tokens: List[str]  # not required
-    logprobs: List[float]  # not required
+    tokens: List[str]
+    logprobs: List[float]
 
 
 def text_completion(
@@ -139,6 +141,7 @@ def chat_completion(
 
 def main(
     task: str = "chat",  # or "text"
+    model_type: str = "instruct",
     temperature: float = 0.6,
     top_p: float = 0.9,
     max_seq_len: int = 512,
@@ -158,14 +161,12 @@ def main(
 ):
     """
     The context window of llama3 models is 8192 tokens, so `max_seq_len` needs to be <= 8192.
-
-    `max_gen_len` is optional in chat, as finetuned models are able to stop generations naturally.
     """
 
-    if task == "text":
-        instruct_model = False
-    elif task == "chat":
+    if model_type == "instruct":
         instruct_model = True
+    else:
+        instruct_model = False
 
     generator = Llama.build(
         instruct_model=instruct_model,
@@ -186,36 +187,23 @@ def main(
 
     if task == "chat":
         dialogs: List[Dialog] = [
-            [{"role": "user", "content": "what is the recipe of mayonnaise?"}],
-            # [
-            #     {"role": "user", "content": "I am going to Paris, what should I see?"},
-            #     {
-            #         "role": "assistant",
-            #         "content": """\
-            # Paris, the capital of France, is known for its stunning architecture, art museums, historical landmarks, and romantic atmosphere. Here are some of the top attractions to see in Paris:
-            # 1. The Eiffel Tower: The iconic Eiffel Tower is one of the most recognizable landmarks in the world and offers breathtaking views of the city.
-            # 2. The Louvre Museum: The Louvre is one of the world's largest and most famous museums, housing an impressive collection of art and artifacts, including the Mona Lisa.
-            # 3. Notre-Dame Cathedral: This beautiful cathedral is one of the most famous landmarks in Paris and is known for its Gothic architecture and stunning stained glass windows.
-            # These are just a few of the many attractions that Paris has to offer. With so much to see and do, it's no wonder that Paris is one of the most popular tourist destinations in the world.""",
-            #     },
-            #     {"role": "user", "content": "What is so great about #1?"},
-            # ],
             [
                 {
                     "role": "user",
-                    "content": "what do I need to do to cancel purchase {{Order Number}}?",
+                    "content": "Good evening, I'd like to file a complaint. My order (number 5528) has arrived damaged.",
                 }
             ],
             [
-                {"role": "system", "content": "Always answer with Haiku"},
-                {"role": "user", "content": "I am going to Paris, what should I see?"},
+                {
+                    "role": "user",
+                    "content": "I can't log into my account, can you help me reset my password?",
+                }
             ],
             [
                 {
-                    "role": "system",
-                    "content": "Always answer with emojis",
+                    "role": "user",
+                    "content": "I'm trying to throw a birthday party for my dad, can you give me some ideas? He loves cars and hiking.",
                 },
-                {"role": "user", "content": "How to go from Beijing to NY?"},
             ],
         ]
         results = chat_completion(
@@ -235,15 +223,17 @@ def main(
             )
             print("\n==================================\n")
 
+        del dialogs, results, generator
+        gc.collect()
+        torch.cuda.empty_cache()
+
     elif task == "text":
         prompts: List[str] = [
-            # For these prompts, the expected answer is the natural continuation of the prompt
             "I believe the meaning of life is",
             "Simply put, the theory of relativity states that ",
             """A brief message congratulating the team on the launch:
             Hi everyone,
             I just """,
-            # Few shot prompt (providing a few examples before asking model to complete more);
             """Translate English to French:
             sea otter => loutre de mer
             peppermint => menthe poivrée
@@ -266,4 +256,87 @@ def main(
 
 
 if __name__ == "__main__":
-    fire.Fire(main)
+
+    customer_path = "tuned_checkpoints/customer_dataset"
+    mixed_path = "tuned_checkpoints/mixed_dataset"
+
+    customer_models = [
+        "llama3_8b_instruct_customer",
+        "llama3_8b_moe_instruct_customer",
+        "llama3_8b_pretrained_customer",
+        "llama3_8b_moe_pretrained_customer",
+    ]
+    mixed_models = [
+        "llama3_8b_instruct_mixed",
+        "llama3_8b_moe_instruct_mixed",
+        "llama3_8b_pretrained_mixed",
+        "llama3_8b_moe_pretrained_mixed",
+    ]
+
+    for i in ["customer", "mixed"]:
+        if i == "customer":
+            path = customer_path
+            models = customer_models
+        else:
+            path = mixed_path
+            models = mixed_models
+
+        for model_name in models:
+            modelpath = f"{path}/{model_name}"
+
+            json_config = json.load(open(f"{modelpath}/model_config.json", "r"))
+
+            model_config = {
+                "task": "chat",
+                "model_type": json_config["model_type"],
+                "quant_type": json_config["quant_type"],
+                "lora_ckpt_path": f"{modelpath}/model.pt",
+                "lora_target": json_config["lora_target"],
+                "lora_r": json_config["lora_r"],
+                "lora_alpha": json_config["lora_alpha"],
+                "lora_dropout": json_config["lora_dropout"],
+                "max_seq_len": json_config["context_length"],
+                "seed": 1,
+                "use_moe": json_config["use_moe"],
+                "num_experts": json_config["num_experts"],
+                "num_experts_per_tok": json_config["num_experts_per_tok"],
+                "max_batch_size": 3,
+                "use_cache": True,
+            }
+
+            print(
+                f"""
+                    ######
+                    Running {model_name}
+                    ######"""
+            )
+            main(**model_config)
+
+    for i in ["instruct", "pretrained"]:
+        model_config = {
+            "task": "chat",
+            "model_type": i,
+            "quant_type": "nf4",
+            "lora_r": 0,
+            "lora_alpha": 0,
+            "lora_dropout": 0,
+            "max_seq_len": 8192,
+            "seed": 1,
+            "use_moe": False,
+            "num_experts": 0,
+            "num_experts_per_tok": 0,
+            "max_batch_size": 3,
+            "use_cache": True,
+        }
+
+        if i == "pretrained":
+            model_config["max_gen_len"] = 1024
+
+        print(
+            f"""
+                ######
+                Running base {i} model in nf4
+                ######"""
+        )
+
+        main(**model_config)

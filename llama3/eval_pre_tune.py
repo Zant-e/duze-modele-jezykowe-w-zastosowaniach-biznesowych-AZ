@@ -20,6 +20,7 @@ def main(model_type, quant_type, limit=100):
         lora_alpha=0,
         lora_dropout=0.0,
         quant_type=quant_type,
+        use_cache=True,
     )
 
     mymodel = HarnessModel(generator)
@@ -33,7 +34,7 @@ def main(model_type, quant_type, limit=100):
         "mmlu": 5,
         "glue": 2,
         "super-glue-lm-eval-v1": 2,
-        "lambada": 2,
+        # "lambada": 2,
         "prost": None,
     }
     results = {}

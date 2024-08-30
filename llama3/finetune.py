@@ -39,10 +39,8 @@ def setup_wandb(train_config, **kwargs):
 
 
 def main(**kwargs):
-    # Update the configuration for training
     train_config = TRAIN_CONFIG()
     update_config((train_config), **kwargs)
-    # Set the seeds for reproducibility
     torch.manual_seed(train_config.seed)
     random.seed(train_config.seed)
 
@@ -51,7 +49,6 @@ def main(**kwargs):
     if train_config.use_wandb:
         wandb_run = setup_wandb(train_config, **kwargs)
 
-    # Load the pre-trained model and setup its configuration
     generator = Llama.build(
         instruct_model=train_config.model_type == "instruct",
         max_seq_len=train_config.context_length,
@@ -73,7 +70,6 @@ def main(**kwargs):
     model = generator.model
     tokenizer = generator.tokenizer
 
-    # Load and preprocess the dataset for training and validation
     if train_config.dataset == "curious_dataset":
         dataset = load_dataset("xiyuez/im-feeling-curious", split="train")
         split = dataset.train_test_split(test_size=0.2, seed=train_config.seed)
@@ -144,7 +140,6 @@ def main(**kwargs):
     if train_config.batching_strategy == "packing":
         dataset_train = ConcatDataset(dataset_train, seq_length=768)
 
-    # Create DataLoaders for the training and validation dataset
     train_dataloader = torch.utils.data.DataLoader(
         dataset_train,
         batch_size=train_config.batch_size_training,
@@ -166,7 +161,6 @@ def main(**kwargs):
             collate_fn=lambda batch: collate_fn(batch, pad_id=tokenizer.eos_id),
         )
 
-    # Initialize the optimizer and learning rate scheduler
     optimizer = optim.AdamW(
         model.parameters(),
         lr=train_config.lr,
@@ -174,7 +168,6 @@ def main(**kwargs):
     )
     scheduler = StepLR(optimizer, step_size=1, gamma=train_config.gamma)
 
-    # Start the training process
     results = train(
         model,
         train_dataloader,

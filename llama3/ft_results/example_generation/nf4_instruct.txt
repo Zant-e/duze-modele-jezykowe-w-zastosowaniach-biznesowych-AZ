@@ -1,0 +1,54 @@
+######
+base dense instruct model in nf4
+######
+
+User: Good evening, I'd like to file a complaint. My order (number 5528) has arrived damaged.
+
+> Assistant: I'm so sorry to hear that your order arrived damaged. Can you please provide me with more details about the issue? What specifically is damaged, and are there any visible signs of damage or missing items? Additionally, can you please confirm the date of delivery and the estimated delivery date on your order confirmation email? This will help me to better assist you with your complaint.
+
+==================================
+
+User: I can't log into my account, can you help me reset my password?
+
+> Assistant: I'd be happy to help you reset your password. Can you please provide me with the following information so I can assist you better?
+
+1. Your email address or username associated with the account.
+2. The account type (e.g., email, social media, online banking, etc.).
+
+Once I have this information, I can guide you through the password reset process.
+
+==================================
+
+User: I'm trying to throw a birthday party for my dad, can you give me some ideas? He loves cars and hiking.
+
+> Assistant: What a great idea! I'd be happy to help you plan a birthday party that your dad will never forget. Since he loves cars and hiking, here are some ideas to get you started:
+
+**Car-themed party ideas:**
+
+1. **Vintage Car Show**: Rent a few classic cars and invite friends to bring their own vintage vehicles. You can also have a "best in show" competition.
+2. **Racing Simulator**: Set up a racing simulator experience where guests can play popular racing games like Gran Turismo or Forza.
+3. **Car-themed food and drinks**: Serve "gasoline" (red-colored) punch, "tire tracks" (black and white) cupcakes, and "racing stripes" (red and white) cookies.
+4. **Car-themed games**: Play games like "Pin the License Plate on the Car," "Car-themed Charades," or "Car Trivia."
+
+**Hiking-themed party ideas:**
+
+1. **Hike and Picnic**: Organize a group hike to a nearby trail, followed by a picnic lunch at the summit or a scenic spot.
+2. **Outdoor Games**: Set up a few outdoor games like capture the flag, frisbee toss, or a scavenger hunt with a hiking twist.
+3. **Hiking-themed food and drinks**: Serve trail mix, energy bars, and "mountain water" (water with a few ice cubes and a sprig of mint).
+4. **Hiking stories and photos**: Set up a display with your dad's favorite hiking photos and stories from his adventures.
+
+**Combining both themes:**
+
+1. **Hike and Drive**: Organize a group hike in the morning, followed by a scenic drive to a nearby attraction or a car-themed destination.
+2. **Car-themed Scavenger Hunt**: Create a scavenger hunt with clues and challenges that require participants to use their cars or hike to the next location.
+3. **Outdoor Movie Night**: Set up an outdoor movie screen or projector to show a car-themed movie (like "Fast and Furious") or a documentary about hiking and outdoor adventures.
+
+**Other ideas:**
+
+1. **Personalized gift**: Give your dad a personalized gift, such as a customized car accessory or a framed photo from one of his favorite hikes.
+2. **Guest book**: Create a guest book with a theme related to cars or hiking. Ask guests to write a message or draw a picture that reflects your dad's love for these activities.
+3. **Favors**: Offer party favors that fit the theme, such as car-themed keychains, hiking-themed water bottles, or a small plant to symbolize the start of a new adventure.
+
+Remember to tailor the party to your dad's specific interests and preferences to make it a truly special celebration. Good luck, and I hope your dad has an amazing birthday!
+
+==================================

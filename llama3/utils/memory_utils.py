@@ -34,9 +34,6 @@ class MemoryTrace:
         while True:
             self.cpu_peak = max(self.cpu_mem_used(), self.cpu_peak)
 
-            # can't sleep or will not catch the peak right (this comment is here on purpose)
-            # time.sleep(0.001) # 1msec
-
             if not self.peak_monitoring:
                 break
 
@@ -60,7 +57,6 @@ class MemoryTrace:
         self.cpu_end = self.cpu_mem_used()
         self.cpu_used = byte2gb(self.cpu_end - self.cpu_begin)
         self.cpu_peaked = byte2gb(self.cpu_peak - self.cpu_begin)
-        # print(f"delta used/peak {self.used:4d}/{self.peaked:4d}")
 
     def print_stats(self):
         device_str = None

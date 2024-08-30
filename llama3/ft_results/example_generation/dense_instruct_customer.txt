@@ -1,0 +1,41 @@
+######
+llama3_8b_dense_instruct_customer
+######
+
+User: Good evening, I'd like to file a complaint. My order (number 5528) has arrived damaged.
+
+> Assistant: I'm sorry to hear that your order number {{Order Number}} arrived damaged. We understand the importance of receiving your items in a satisfactory condition. To file a complaint, I kindly request you to provide me with more details about the damage you encountered. This will help us investigate the matter thoroughly and take appropriate action to resolve the issue. Rest assured, we are committed to ensuring your satisfaction and will do our best to address your concern promptly.
+
+==================================
+
+User: I can't log into my account, can you help me reset my password?
+
+> Assistant: I'll make it happen! I'm here to assist you with resetting your password and getting you back into your account. Let's work together to make this happen:
+
+1. To begin, please visit the "{{Login Page URL}}" of our platform.
+2. Look for the option that says "{{Forgot Password}}" and click on it.
+3. You will be prompted to enter the email address associated with your account. Please provide the email address you used during the account creation process.
+4. In just a moment, you should receive an email with detailed instructions on how to reset your password. If you don't see it in your main inbox, be sure to check your spam or junk folder as well.
+5. Follow the instructions in the email to create a new, secure password for your account.
+
+If you encounter any difficulties along the way or if the email doesn't arrive within a reasonable time, please don't hesitate to reach out to me. I'm here to guide you through this process and ensure your account is secure and accessible.
+
+==================================
+
+User: I'm trying to throw a birthday party for my dad, can you give me some ideas? He loves cars and hiking.
+
+> Assistant: What a wonderful idea to throw a birthday party for your dad! I'm here to provide you with some fantastic ideas that incorporate his interests in cars and hiking. Let's get started!
+
+1. Car-themed party: Organize a car-themed party with a vintage car show, a scavenger hunt, or even a car-themed cake. You can also invite a local car enthusiast or a car collector to share their experiences and showcase their vehicles.
+
+2. Hiking adventure: Plan a guided hiking trip in a nearby park or nature reserve. Make sure to choose a trail that offers breathtaking views and a moderate level of difficulty. You can also pack a picnic lunch to enjoy during the hike.
+
+3. Outdoor games: Set up a few outdoor games like frisbee, soccer, or capture the flag. This will allow your dad and his friends to enjoy some friendly competition and physical activity.
+
+4. Personalized gift: Consider gifting your dad a personalized item related to his love for cars or hiking. This could be a customized car keychain, a personalized hiking journal, or even a framed picture of his favorite hiking spot.
+
+5. Themed decorations: Add a touch of adventure to the party decorations by incorporating elements like maps, compasses, and car emblems. You can also hang pictures of your dad's favorite hiking spots or cars.
+
+Remember to involve your dad in the planning process and make sure he feels special on his birthday. With these ideas, you'll create an unforgettable celebration that he'll cherish for years to come.
+
+==================================

@@ -6,10 +6,10 @@ from typing import List, Optional
 class train_config:
     # Model settings
     model_name: str = "model"
-    model_type: str = "pretrained"  # pretrained or instruct
+    model_type: str = "instruct"  # pretrained or instruct
     quant_type: str = "nf4"  # nf4, fp4, 8bit, ""
     lora_ckpt_path: str = ""  # path to lora checkpoint
-    output_dir: str = "tuned_checkpoints/llama3_8b_moe_pretrained_mixed"
+    output_dir: str = "tuned_checkpoints/llama3_8b_moe_instruct_mixed"
 
     # LoRA settings
     lora_target: List[str] = field(
@@ -27,7 +27,7 @@ class train_config:
     num_epochs: int = 1
     max_train_step: int = 99999999
     max_eval_step: int = 9999999
-    lr: float = 1e-4
+    lr: float = 4e-4
     weight_decay: float = 0
     gamma: float = 0.1
     batching_strategy: str = "padding"  # packing or padding
@@ -48,7 +48,7 @@ class train_config:
     # curious_dataset, pure_dove, cust_support or mixed (pure_dove + cust_support)
 
     # Save settings
-    save_model: bool = True
+    save_model: bool = False
     save_metrics: bool = False
 
     # WandB settings

@@ -29,12 +29,6 @@ def load_balancing_loss_func(
     gate_logits: torch.Tensor, num_experts: int = 8, top_k: int = 2
 ):
     """
-    Computes auxiliary load balancing loss as in Switch Transformer - implemented in Pytorch.
-
-    See Switch Transformer (https://arxiv.org/abs/2101.03961) for more details. This function implements the loss
-    function presented in equations (4) - (6) of the paper. It aims at penalizing cases where the routing between
-    experts is too unbalanced.
-
     Args:
         gate_logits (Union[`torch.Tensor`, Tuple[torch.Tensor]): Logits from the `gate`, should be a tuple of  tensors of shape [batch_size X sequence_length, num_experts].
         num_experts (int): Number of experts, defaults to 8.

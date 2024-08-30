@@ -44,6 +44,7 @@ class HarnessModel(LM):
                     logprobs=False,
                     echo=False,
                     additional_stop_tokens=until_tokens,
+                    use_cache=True,
                 )
             results.append(self.tokenizer.decode(generation_tokens[0]))
 
@@ -95,7 +96,10 @@ class HarnessModel(LM):
             input_tensor = torch.tensor([input_tokens], dtype=torch.long, device="cuda")
 
             with torch.no_grad():
-                logits = self.model(input_tensor, start_pos=0)
+                if self.model.params.moe:
+                    logits, _ = self.model(input_tensor, start_pos=0)
+                else:
+                    logits = self.model(input_tensor, start_pos=0)
 
             # Calculate log-probabilities for the continuation part
             logits = logits[0, len(context_tokens) - 1 : -1]
@@ -180,7 +184,10 @@ class HarnessModel(LM):
                 )
 
                 with torch.no_grad():
-                    logits = self.model(input_tensor, start_pos=0)
+                    if self.model.params.moe:
+                        logits, _ = self.model(input_tensor, start_pos=0)
+                    else:
+                        logits = self.model(input_tensor, start_pos=0)
 
                 # Calculate log-probabilities for the input tokens
                 logits = logits[0, :-1]
