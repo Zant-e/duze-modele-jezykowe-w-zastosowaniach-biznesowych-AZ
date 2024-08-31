@@ -61,7 +61,6 @@ def main(path_list, limit=100):
             "mmlu": 5,
             "glue": 2,
             "super-glue-lm-eval-v1": 2,
-            # "lambada": 2,
             "prost": None,
         }
         results = {}
@@ -120,9 +119,9 @@ def main(path_list, limit=100):
 if __name__ == "__main__":
 
     path_list = [
-        # "tuned_checkpoints/customer_dataset/llama3_8b_instruct_customer",
-        # "tuned_checkpoints/customer_dataset/llama3_8b_moe_instruct_customer",
-        # "tuned_checkpoints/customer_dataset/llama3_8b_pretrained_customer",
+        "tuned_checkpoints/customer_dataset/llama3_8b_instruct_customer",
+        "tuned_checkpoints/customer_dataset/llama3_8b_moe_instruct_customer",
+        "tuned_checkpoints/customer_dataset/llama3_8b_pretrained_customer",
         "tuned_checkpoints/customer_dataset/llama3_8b_moe_pretrained_customer",
         "tuned_checkpoints/mixed_dataset/llama3_8b_instruct_mixed",
         "tuned_checkpoints/mixed_dataset/llama3_8b_moe_instruct_mixed",

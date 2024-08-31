@@ -81,10 +81,6 @@ class HarnessModel(LM):
                 continuation, bos=False, eos=True
             )
 
-            # To be used for lambada perplexity testing
-            # continuation_tokens = self.tokenizer.encode(
-            #     continuation, bos=False, eos=False
-            # )
             input_tokens = context_tokens + continuation_tokens
 
             # Ensure the total length does not exceed the maximum sequence length

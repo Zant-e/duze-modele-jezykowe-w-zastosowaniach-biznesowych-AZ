@@ -34,7 +34,6 @@ def main(model_type, quant_type, limit=100):
         "mmlu": 5,
         "glue": 2,
         "super-glue-lm-eval-v1": 2,
-        # "lambada": 2,
         "prost": None,
     }
     results = {}
