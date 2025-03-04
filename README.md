@@ -1,5 +1,7 @@
 # Praca magisterska - Antoni Ziółkowski
 
+## Sama praca mgr to pdf w głownym folderze.
+
 ## Ogólne informacje:
 - Repozytorium bazuje na Linuksie, niektóre biblioteki nie działają na Windowsie.
 - Do uruchomienia przykładów/eksperymentów z modelem należy najpierw pobrać model od Mety. \
